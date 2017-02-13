@@ -18,21 +18,26 @@ using System.Reflection.Emit;
 
 namespace clojure.lang.CljCompiler.Ast
 {
-    sealed class InstanceOfExpr : Expr, MaybePrimitiveExpr
+    public sealed class InstanceOfExpr : Expr, MaybePrimitiveExpr
     {
+        public ParserContext ParsedContext { get; set; }
+        
         #region Data
 
         readonly Expr _expr;
-        readonly Type _t;
+        public Expr Expr { get { return _expr; } }
 
-        // Keep these around for debugging
-#pragma warning disable 414
+        readonly Type _t;
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1721:PropertyNamesShouldNotMatchGetMethods")]
+        public Type Type { get { return _t; } }
+
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Performance", "CA1823:AvoidUnusedPrivateFields")]
         readonly string _source;
+        public string Source { get { return _source; } }
 
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Performance", "CA1823:AvoidUnusedPrivateFields")]
         readonly IPersistentMap _spanMap;
-#pragma warning restore 414
+        public IPersistentMap SpanMap { get { return _spanMap; } }
 
         #endregion
 
@@ -92,13 +97,6 @@ namespace clojure.lang.CljCompiler.Ast
         {
             _expr.Emit(RHC.Expression, objx, ilg);
 
-            // This corresponds to the most general case code in System.Linq.Expressions.Compiler.LambdaCompiler
-
-            Type opType = _expr.HasClrType && _expr.ClrType != null ? _expr.ClrType : typeof(object);
-            if (opType.IsValueType)
-            {
-                ilg.Emit(OpCodes.Box, opType);
-            }
             ilg.Emit(OpCodes.Isinst, _t);
             ilg.Emit(OpCodes.Ldnull);
             ilg.Emit(OpCodes.Cgt_Un);

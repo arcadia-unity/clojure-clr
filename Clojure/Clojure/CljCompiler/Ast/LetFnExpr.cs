@@ -18,12 +18,18 @@ using System.Reflection.Emit;
 
 namespace clojure.lang.CljCompiler.Ast
 {
-    class LetFnExpr : Expr
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "Fn")]
+    public class LetFnExpr : Expr
     {
+        public ParserContext ParsedContext { get; set; }
+        
         #region Data
 
         readonly IPersistentVector _bindingInits;
+        public IPersistentVector BindingInits { get { return _bindingInits; } }
+
         readonly Expr _body;
+        public Expr Body { get { return _body; } }
 
         #endregion
 
@@ -55,6 +61,7 @@ namespace clojure.lang.CljCompiler.Ast
 
         public sealed class Parser : IParser
         {
+            [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1725:ParameterNamesShouldMatchBaseDeclaration", MessageId = "1#")]
             public Expr Parse(ParserContext pcon, object frm)
             {
                 ISeq form = (ISeq)frm;
@@ -93,7 +100,7 @@ namespace clojure.lang.CljCompiler.Ast
                         if (sym.Namespace != null)
                             throw new ParseException("Can't let qualified name: " + sym);
 
-                        LocalBinding b = Compiler.RegisterLocal(sym, Compiler.TagOf(sym), null,false);
+                        LocalBinding b = Compiler.RegisterLocal(sym, Compiler.TagOf(sym), null, typeof(Object), false);
                         // b.CanBeCleared = false;
                         lbs = lbs.cons(b);
                     }

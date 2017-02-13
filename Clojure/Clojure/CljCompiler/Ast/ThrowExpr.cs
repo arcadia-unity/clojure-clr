@@ -17,15 +17,21 @@ using System.Reflection.Emit;
 
 namespace clojure.lang.CljCompiler.Ast
 {
-    class ThrowExpr : UntypedExpr
+    public class ThrowExpr : UntypedExpr
     {
         #region Data
 
         readonly Expr _excExpr;
+        public Expr ExcExpr { get { return _excExpr; } }
 
         #endregion
 
         #region Ctors
+
+        public ThrowExpr()
+            : this(null)
+        {
+        }
 
         public ThrowExpr(Expr excExpr)
         {
@@ -42,6 +48,12 @@ namespace clojure.lang.CljCompiler.Ast
             {
                 if (pcon.Rhc == RHC.Eval)
                     return Compiler.Analyze(pcon, RT.list(RT.list(Compiler.FnOnceSym, PersistentVector.EMPTY, form)), "throw__" + RT.nextID());
+
+                if (RT.Length((ISeq)form) == 1)
+                    return new ThrowExpr();
+
+                if (RT.count(form) > 2)
+                    throw new InvalidOperationException("Too many arguments to throw, throw expects a single Exception instance");
 
                 return new ThrowExpr(Compiler.Analyze(pcon.SetRhc(RHC.Expression).SetAssign(false), RT.second(form)));
             }
@@ -62,9 +74,16 @@ namespace clojure.lang.CljCompiler.Ast
 
         public override void Emit(RHC rhc, ObjExpr objx, CljILGen ilg)
         {
-            _excExpr.Emit(RHC.Expression, objx, ilg);
-            ilg.Emit(OpCodes.Castclass, typeof(Exception));
-            ilg.Emit(OpCodes.Throw);
+            if (_excExpr == null)
+            {
+                ilg.Emit(OpCodes.Rethrow);
+            }
+            else
+            {
+                _excExpr.Emit(RHC.Expression, objx, ilg);
+                ilg.Emit(OpCodes.Castclass, typeof(Exception));
+                ilg.Emit(OpCodes.Throw);
+            }
         }
 
         public override bool HasNormalExit() { return false; }

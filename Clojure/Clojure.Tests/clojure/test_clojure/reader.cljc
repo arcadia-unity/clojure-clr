@@ -353,8 +353,7 @@
   (are [err msg form] (thrown-with-msg? err msg (read-string form))
        Exception #"Invalid token: foo:" "foo:"
        Exception #"Invalid token: :bar/" ":bar/"
-       Exception #"Invalid token: ::does.not/exist" "::does.not/exist"
-	   Exception #"Invalid token: :5" ":5"))
+       Exception #"Invalid token: ::does.not/exist" "::does.not/exist"))
 
 ;; Lists
 
@@ -434,6 +433,11 @@
         form))
     ;; sanity check against e.g. reading returning ()
     (is (= (count expected-metadata) @verified-forms))))
+
+(deftest set-line-number
+  (let [r (clojure.lang.LineNumberingTextReader. *in*)]                   ;;; LineNumberingPushbackReader
+    (.set_LineNumber r 100)                                               ;;; .setLineNumber
+    (is (= 100 (.get_LineNumber r)))))                                    ;;; .getLineNumber
 
 (deftest t-Metadata
   (is (= (meta '^:static ^:awesome ^{:static false :bar :baz} sym) {:awesome true, :bar :baz, :static true})))
@@ -541,7 +545,7 @@
   ;;;    (testing "read-instant-calendar should preserve timezone"
   ;;;      (is (not= (read-string s) (read-string s2)))))))
   )
-  ;; UUID Literals
+;; UUID Literals
 ;; #uuid "550e8400-e29b-41d4-a716-446655440000"
 
 (deftest UUID
@@ -618,3 +622,95 @@
   [^{:tag cgen/dup-readable} o]
   (when-not (= o %)
     (throw (ex-info "Value cannot roundtrip, see ex-data" {:printed o :read %}))))
+
+(defrecord TestRecord [x y])
+
+(deftest preserve-read-cond-test
+  (let [x (read-string {:read-cond :preserve} "#?(:cljr foo :cljs bar)" )]
+       (is (reader-conditional? x))
+       (is (not (:splicing? x)))
+       (is (= :foo (get x :no-such-key :foo)))
+       (is (= (:form x) '(:cljr foo :cljs bar)))
+       (is (= x (reader-conditional '(:cljr foo :cljs bar) false))))
+  (let [x (read-string {:read-cond :preserve} "#?@(:cljr [foo])" )]
+       (is (reader-conditional? x))
+       (is (:splicing? x))
+       (is (= :foo (get x :no-such-key :foo)))
+       (is (= (:form x) '(:cljr [foo])))
+       (is (= x (reader-conditional '(:cljr [foo]) true))))
+  (is (thrown-with-msg? Exception #"No reader function for tag"                         ;;; RuntimeException
+                        (read-string {:read-cond :preserve} "#js {:x 1 :y 2}" )))
+  (let [x (read-string {:read-cond :preserve} "#?(:cljs #js {:x 1 :y 2})")
+        [platform tl] (:form x)]
+       (is (reader-conditional? x))
+       (is (tagged-literal? tl))
+       (is (= 'js (:tag tl)))
+       (is (= {:x 1 :y 2} (:form tl)))
+       (is (= :foo (get tl :no-such-key :foo)))
+       (is (= tl (tagged-literal 'js {:x 1 :y 2}))))
+  (testing "print form roundtrips"
+           (doseq [s ["#?(:cljr foo :cljs bar)"
+                      "#?(:cljs #js {:x 1, :y 2})"
+                      "#?(:cljr #clojure.test_clojure.reader.TestRecord [42 85])"]]
+                  (is (= s (pr-str (read-string {:read-cond :preserve} s)))))))
+
+(deftest reader-conditionals
+  (testing "basic read-cond"
+    (is (= '[foo-form]
+           (read-string {:read-cond :allow :features #{:foo}} "[#?(:foo foo-form :bar bar-form)]")))
+    (is (= '[bar-form]
+           (read-string {:read-cond :allow :features #{:bar}} "[#?(:foo foo-form :bar bar-form)]")))
+    (is (= '[foo-form]
+           (read-string {:read-cond :allow :features #{:foo :bar}} "[#?(:foo foo-form :bar bar-form)]")))
+    (is (= '[]
+           (read-string {:read-cond :allow :features #{:baz}} "[#?( :foo foo-form :bar bar-form)]"))))
+  (testing "environmental features"
+    (is (= "clojure" #?(:cljr "clojure" :cljs "clojurescript" :default "default"))))
+  (testing "default features"
+    (is (= "default" #?(:clj-clr "clr" :cljs "cljs" :default "default"))))
+  (testing "splicing"
+    (is (= [] [#?@(:cljr [])]))
+    (is (= [:a] [#?@(:cljr [:a])]))
+    (is (= [:a :b] [#?@(:cljr [:a :b])]))
+    (is (= [:a :b :c] [#?@(:cljr [:a :b :c])]))
+    (is (= [:a :b :c] [#?@(:cljr [:a :b :c])])))
+  (testing "nested splicing"
+    (is (= [:a :b :c :d :e]
+           [#?@(:cljr [:a #?@(:cljr [:b #?@(:cljr [:c]) :d]):e])]))
+    (is (= '(+ 1 (+ 2 3))
+           '(+ #?@(:cljr [1 (+ #?@(:cljr [2 3]))]))))
+    (is (= '(+ (+ 2 3) 1)
+           '(+ #?@(:cljr [(+ #?@(:cljr [2 3])) 1]))))
+    (is (= [:a [:b [:c] :d] :e]
+           [#?@(:cljr [:a [#?@(:cljr [:b #?@(:cljr [[:c]]) :d])] :e])])))
+  (testing "bypass unknown tagged literals"
+    (is (= [1 2 3] #?(:cljs #js [1 2 3] :cljr [1 2 3])))
+    (is (= :clojure #?(:foo #some.nonexistent.Record {:x 1} :cljr :clojure))))
+  (testing "error cases"
+    (is (thrown-with-msg? Exception #"Feature should be a keyword" (read-string {:read-cond :allow} "#?((+ 1 2) :a)")))              ;;; RuntimeException
+    (is (thrown-with-msg? Exception #"even number of forms" (read-string {:read-cond :allow} "#?(:cljs :a :cljr)")))                  ;;; RuntimeException
+    (is (thrown-with-msg? Exception #"read-cond-splicing must implement" (read-string {:read-cond :allow} "#?@(:cljr :a)")))          ;;; RuntimeException
+    (is (thrown-with-msg? Exception #"is reserved" (read-string {:read-cond :allow} "#?@(:foo :a :else :b)")))                       ;;; RuntimeException
+    (is (thrown-with-msg? Exception #"must be a list" (read-string {:read-cond :allow} "#?[:foo :a :else :b]")))                     ;;; RuntimeException
+    (is (thrown-with-msg? Exception #"Conditional read not allowed" (read-string {:read-cond :BOGUS} "#?[:cljr :a :default nil]")))   ;;; RuntimeException
+    (is (thrown-with-msg? Exception #"Conditional read not allowed" (read-string "#?[:cljr :a :default nil]")))                       ;;; RuntimeException
+    (is (thrown-with-msg? Exception #"Reader conditional splicing not allowed at the top level" (read-string {:read-cond :allow} "#?@(:cljr [1 2])")))     ;;; RuntimeException
+    (is (thrown-with-msg? Exception #"Reader conditional splicing not allowed at the top level" (read-string {:read-cond :allow} "#?@(:cljr [1])")))       ;;; RuntimeException
+    (is (thrown-with-msg? Exception #"Reader conditional splicing not allowed at the top level" (read-string {:read-cond :allow} "#?@(:cljr []) 1"))))     ;;; RuntimeException
+  (testing "clj-1698-regression"
+    (let [opts {:features #{:cljr} :read-cond :allow}]
+      (is (= 1 (read-string opts "#?(:cljs {'a 1 'b 2} :cljr 1)")))
+      (is (= 1 (read-string opts "#?(:cljs (let [{{b :b} :a {d :d} :c} {}]) :cljr 1)")))
+      (is (= '(def m {}) (read-string opts "(def m #?(:cljs ^{:a :b} {} :cljr  ^{:a :b} {}))")))
+      (is (= '(def m {}) (read-string opts "(def m #?(:cljs ^{:a :b} {} :cljr ^{:a :b} {}))")))
+      (is (= 1 (read-string opts "#?(:cljs {:a #_:b :c} :cljr 1)")))))
+  (testing "nil expressions"
+    (is (nil? #?(:default nil)))
+    (is (nil? #?(:foo :bar :cljr nil)))
+    (is (nil? #?(:cljr nil :foo :bar)))
+    (is (nil? #?(:foo :bar :default nil)))))
+
+(deftest eof-option
+  (is (= 23 (read-string {:eof 23} "")))
+  (is (= 23 (read {:eof 23} (clojure.lang.LineNumberingTextReader.           ;;; clojure.lang.LineNumberingPushbackReader.
+                             (System.IO.StringReader. ""))))))               ;;; java.io.StringReader.

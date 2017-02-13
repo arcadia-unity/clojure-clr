@@ -18,17 +18,13 @@ using System.Reflection.Emit;
 
 namespace clojure.lang.CljCompiler.Ast
 {
-    class KeywordExpr : LiteralExpr
+    public class KeywordExpr : LiteralExpr
     {
         #region Data
 
         readonly Keyword _kw;
-
-        public Keyword Kw
-        {
-            get { return _kw; }
-        } 
-
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "Kw")]
+        public Keyword Kw { get { return _kw; } }
 
         #endregion
 

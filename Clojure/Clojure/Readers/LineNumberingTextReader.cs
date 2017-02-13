@@ -29,11 +29,12 @@ namespace clojure.lang
         public int LineNumber
         {
             get { return _lineNumber; }
+            set { _lineNumber = value; }
         }
 
-        private int _prevColumnNumber = 0;
+        private int _prevColumnNumber = 1;
 
-        private int _columnNumber = 0;
+        private int _columnNumber = 1;
         
         public int ColumnNumber
         {
@@ -114,7 +115,7 @@ namespace clojure.lang
             _atLineStart = true;
             _lineNumber++;
             _prevColumnNumber = _columnNumber - 1;
-            _columnNumber = 0;
+            _columnNumber = 1;
         }
 
         #endregion

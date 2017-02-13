@@ -29,7 +29,7 @@ namespace clojure.lang
         private object _curr;
         private object _next;
 
-        static object _start = new object();
+        static readonly object _start = new object();
 
 
         #endregion
@@ -123,6 +123,7 @@ namespace clojure.lang
 
         private void Dispose(bool disposing)
         {
+            if (!disposing) return;
             _orig = null;
             _curr = null;
             _next = null;

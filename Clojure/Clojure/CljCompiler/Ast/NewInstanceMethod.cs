@@ -19,89 +19,39 @@ using System.Reflection.Emit;
 
 namespace clojure.lang.CljCompiler.Ast
 {
-    sealed class NewInstanceMethod : ObjMethod
+    public sealed class NewInstanceMethod : ObjMethod
     {
         #region Data
 
         string _name;
+        // Public access -- see below
 
         Type[] _argTypes;
+        // Public access -- see below
 
         Type _retType;
+        // Public access -- see below
 
         static readonly Symbol dummyThis = Symbol.intern(null, "dummy_this_dlskjsdfower");
 
-        List<MethodInfo> _minfos;
-
-        public List<MethodInfo> MethodInfos
-        {
-            get { return _minfos; }
-        }
+        IList<MethodInfo> _minfos;
+        public IList<MethodInfo> MethodInfos { get { return _minfos; } }
 
         #endregion
 
         #region ObjMethod methods
 
-        internal override int NumParams
-        {
-            get { return _argLocals.count(); }
-        }
+        public override int NumParams { get { return ArgLocals.count(); } }
 
-        internal override bool IsVariadic
-        {
-            get { return false; }
-        }
-      
-        internal override int RequiredArity
-        {
-            get { return NumParams; }
-        }
+        public override bool IsVariadic { get { return false; } }
 
-        internal override string MethodName
-        {
-            get { return _name; }
-        }
+        public override int RequiredArity { get { return NumParams; } }
 
-        protected override string StaticMethodName
-        {
-            get { return _name + "__static"; }
-        }
+        public override string MethodName { get { return _name; } }
 
-        protected override Type[] StaticMethodArgTypes
-        {
-            get { return _argTypes; }
-        }
+        public override Type[] ArgTypes { get { return _argTypes; } }
 
-        protected override Type[] ArgTypes
-        {
-            get { return _argTypes; }
-        }
-
-        protected override Type ReturnType
-        {
-            get { return _retType; }
-        }
-
-        protected override Type StaticReturnType
-        {
-            get { return _retType; }
-        }
-
-
-        protected override string GetMethodName()
-        {
-            return _name;
-        }
-
-        protected override Type GetReturnType()
-        {
-            return _retType;
-        }
-
-        protected override Type[] GetArgTypes()
-        {
-            return _argTypes;
-        }
+        public override Type ReturnType { get { return _retType; } }
 
         #endregion
 
@@ -116,8 +66,8 @@ namespace clojure.lang.CljCompiler.Ast
 
         #region Parsing
 
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Performance", "CA1800:DoNotCastUnnecessarily")]
-        public static NewInstanceMethod Parse(ObjExpr objx, ISeq form, Symbol thisTag, Dictionary<IPersistentVector, List<MethodInfo>> overrideables, Dictionary<IPersistentVector, List<MethodInfo>> explicits)
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Design", "CA1006:DoNotNestGenericTypesInMemberSignatures"), System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Performance", "CA1800:DoNotCastUnnecessarily")]
+        public static NewInstanceMethod Parse(ObjExpr objx, ISeq form, Symbol thisTag, Dictionary<IPersistentVector, IList<MethodInfo>> overrideables, Dictionary<IPersistentVector, IList<MethodInfo>> explicits)
         {
             // (methodname [this-name args*] body...)
             // this-name might be nil
@@ -135,8 +85,8 @@ namespace clojure.lang.CljCompiler.Ast
                 string dotNameStr = dotName.Name;
                 string interfaceName = dotNameStr.Substring(0, idx);
 
-                method._explicitInterface = RT.classForName(interfaceName);
-                if (method._explicitInterface == null)
+                method.ExplicitInterface = RT.classForName(interfaceName);
+                if (method.ExplicitInterface == null)
                     throw new ParseException(String.Format("Unable to find interface {0} for explicit method implemntation: {1}", interfaceName, dotNameStr));
 
                 methodName = dotNameStr.Substring(idx + 1);
@@ -224,13 +174,13 @@ namespace clojure.lang.CljCompiler.Ast
                     pRefs[i] = isByRef;
                 }
 
-                Dictionary<IPersistentVector, List<MethodInfo>> matches =
+                Dictionary<IPersistentVector, IList<MethodInfo>> matches =
                     method.IsExplicit 
-                    ? FindMethodsWithNameAndArity(method._explicitInterface, methodName, parms.count(), overrideables, explicits)
+                    ? FindMethodsWithNameAndArity(method.ExplicitInterface, methodName, parms.count(), overrideables, explicits)
                     : FindMethodsWithNameAndArity(methodName, parms.count(), overrideables);
 
                 IPersistentVector mk = MSig(methodName, pTypes, method._retType);
-                List<MethodInfo> ms = null;
+                IList<MethodInfo> ms = null;
                 if (matches.Count > 0 )
                 {
                     // multiple matches
@@ -277,23 +227,23 @@ namespace clojure.lang.CljCompiler.Ast
                     throw new ParseException("Can't define method not in interfaces: " + name.Name);
 
                 if (method.IsExplicit)
-                    method._explicitMethodInfo = ms[0];
+                    method.ExplicitMethodInfo = ms[0];
 
                 // validate unique name + arity among additional methods
 
                 for (int i = 0; i < parms.count(); i++)
                 {
-                    LocalBinding lb = Compiler.RegisterLocal(pSyms[i], null, new MethodParamExpr(pTypes[i]), true, pRefs[i]);
+                    LocalBinding lb = Compiler.RegisterLocal(pSyms[i], null, new MethodParamExpr(pTypes[i]), pTypes[i], true, pRefs[i]);
                     argLocals = argLocals.assocN(i, lb);
                     method._argTypes[i] = pTypes[i];
                 }
 
                 Compiler.LoopLocalsVar.set(argLocals);
                 method._name = name.Name;
-                method._methodMeta = GenInterface.ExtractAttributes(RT.meta(name));
-                method._parms = parms;
-                method._argLocals = argLocals;
-                method._body = (new BodyExpr.Parser()).Parse(new ParserContext(RHC.Return), body);
+                method.MethodMeta = GenInterface.ExtractAttributes(RT.meta(name));
+                method.Parms = parms;
+                method.ArgLocals = argLocals;
+                method.Body = (new BodyExpr.Parser()).Parse(new ParserContext(RHC.Return), body);
                 return method;
             }
             finally
@@ -303,14 +253,14 @@ namespace clojure.lang.CljCompiler.Ast
         }
 
 
-        private static Dictionary<IPersistentVector, List<MethodInfo>> FindMethodsWithNameAndArity(
+        private static Dictionary<IPersistentVector, IList<MethodInfo>> FindMethodsWithNameAndArity(
             String name, 
             int arity, 
-            Dictionary<IPersistentVector, List<MethodInfo>> mm)
+            Dictionary<IPersistentVector, IList<MethodInfo>> mm)
         {
-            Dictionary<IPersistentVector, List<MethodInfo>> ret = new Dictionary<IPersistentVector, List<MethodInfo>>();
+            Dictionary<IPersistentVector, IList<MethodInfo>> ret = new Dictionary<IPersistentVector, IList<MethodInfo>>();
             
-            foreach (KeyValuePair<IPersistentVector, List<MethodInfo>> kv in mm)
+            foreach (KeyValuePair<IPersistentVector, IList<MethodInfo>> kv in mm)
             {
                 MethodInfo m = kv.Value[0];
                 if (name.Equals(m.Name) && m.GetParameters().Length == arity)
@@ -319,28 +269,28 @@ namespace clojure.lang.CljCompiler.Ast
             return ret;
         }
 
-        private static Dictionary<IPersistentVector, List<MethodInfo>> FindMethodsWithNameAndArity(
+        private static Dictionary<IPersistentVector, IList<MethodInfo>> FindMethodsWithNameAndArity(
             Type explicitInterface,
             String name,
             int arity,
-             Dictionary<IPersistentVector, List<MethodInfo>> overrideables,
-            Dictionary<IPersistentVector, List<MethodInfo>> explicits)
+             Dictionary<IPersistentVector, IList<MethodInfo>> overrideables,
+            Dictionary<IPersistentVector, IList<MethodInfo>> explicits)
         {
-            Dictionary<IPersistentVector, List<MethodInfo>> ret = new Dictionary<IPersistentVector, List<MethodInfo>>();
+            Dictionary<IPersistentVector, IList<MethodInfo>> ret = new Dictionary<IPersistentVector, IList<MethodInfo>>();
 
-            foreach (KeyValuePair<IPersistentVector, List<MethodInfo>> kv in overrideables)
+            foreach (KeyValuePair<IPersistentVector, IList<MethodInfo>> kv in overrideables)
             {
                 MethodInfo m = kv.Value[0];
                 if (name.Equals(m.Name) && m.GetParameters().Length == arity && m.DeclaringType == explicitInterface)
                     ret[kv.Key] = kv.Value;
             }
 
-            foreach (KeyValuePair<IPersistentVector, List<MethodInfo>> kv in explicits)
+            foreach (KeyValuePair<IPersistentVector, IList<MethodInfo>> kv in explicits)
             {
                 foreach (MethodInfo mi in kv.Value)
                     if (name.Equals(mi.Name) && mi.GetParameters().Length == arity && mi.DeclaringType == explicitInterface)
                     {
-                        List<MethodInfo> list;
+                        IList<MethodInfo> list;
                         if (!ret.TryGetValue(kv.Key, out list))
                         {
                             list = new List<MethodInfo>();
@@ -365,7 +315,7 @@ namespace clojure.lang.CljCompiler.Ast
         public override void Emit(ObjExpr fn, TypeBuilder tb)
         {
 
-            MethodBuilder mb = tb.DefineMethod(GetMethodName(), MethodAttributes.ReuseSlot | MethodAttributes.Public | MethodAttributes.Virtual, GetReturnType(), GetArgTypes());
+            MethodBuilder mb = tb.DefineMethod(MethodName, MethodAttributes.ReuseSlot | MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.HideBySig, ReturnType, ArgTypes);
             SetCustomAttributes(mb);
 
             CljILGen ilg = new CljILGen(mb.GetILGenerator());
@@ -377,8 +327,8 @@ namespace clojure.lang.CljCompiler.Ast
             {
                 Var.pushThreadBindings(RT.map(Compiler.LoopLabelVar,loopLabel,Compiler.MethodVar,this));
                 ilg.MarkLabel(loopLabel);
-                EmitBody(Objx,ilg,_retType,_body);
-                if ( _body.HasNormalExit() )
+                EmitBody(Objx,ilg,_retType,Body);
+                if ( Body.HasNormalExit() )
                     ilg.Emit(OpCodes.Ret);
             }
             finally
@@ -387,7 +337,7 @@ namespace clojure.lang.CljCompiler.Ast
             }
 
             if (IsExplicit)
-                tb.DefineMethodOverride(mb, _explicitMethodInfo);
+                tb.DefineMethodOverride(mb, ExplicitMethodInfo);
         }    
 
         #endregion

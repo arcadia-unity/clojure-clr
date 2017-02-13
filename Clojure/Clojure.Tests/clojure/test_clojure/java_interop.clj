@@ -53,8 +53,18 @@
   ; Classname/staticField
   (are [x] (= x 2147483647)
       Int32/MaxValue                              ;;; Integer/MAX_VALUE
-      (. Int32 MaxValue) ))                    ;;; Integer MAX_VALUE
+      (. Int32 MaxValue) ))                       ;;; Integer MAX_VALUE
 
+;;;(definterface I (a []))
+;;;(deftype T [a] I (a [_] "method"))
+
+;;;(deftest test-reflective-field-name-ambiguous
+;;;  (let [t (->T "field")]
+;;;    (is (= "method" (. ^T t a)))
+;;;    (is (= "field" (. ^T t -a)))
+;;;    (is (= "method" (. t a)))
+;;;    (is (= "field" (. t -a)))
+;;;    (is (thrown? MissingMethodException (. t -BOGUS)))))                                ;;; IllegalArgumentException
 
 (deftest test-double-dot
   (is (=  (.. Environment (GetEnvironmentVariables) (get_Item "Path"))             ;;;  (.. System (getProperties) (get "os.name"))
@@ -110,6 +120,12 @@
 
 ; set!
 
+(defprotocol p (f [_]))
+(deftype t [^:unsynchronized-mutable x] p (f [_] (set! (.x _) 1)))
+
+(deftest test-set!
+  (is (= 1 (f (t. 1)))))
+
 ; memfn
 
 
@@ -157,7 +173,7 @@
 
 
 (deftest test-bases
-  (are [x y] (= x y)
+  (are [x y] (= (set x) (set y))                                ;;; added calls to set
       (bases  System.Math)                                      ;;; java.lang.Math)
         (list System.Object)                                    ;;; java.lang.Object)
       (bases System.Collections.ICollection)                    ;;; java.util.Collection)
@@ -194,6 +210,11 @@
 ; Arrays: [alength] aget aset [make-array to-array into-array to-array-2d aclone]
 ;   [float-array, int-array, etc]
 ;   amap, areduce
+
+;; http://dev.clojure.org/jira/browse/CLJ-1657
+(deftest test-proxy-abstract-super
+  (let [p (proxy [System.IO.Stream] [])]                            ;;; java.io.Writer
+    (is (thrown? NotImplementedException (.Write p nil 1 1)))))     ;;; UnsupportedOperationException  (.close p)
 
 (defmacro deftest-type-array [type-array type]
   `(deftest ~(symbol (str "test-" type-array))
@@ -344,6 +365,8 @@
         (class (first a)) (class (first v)) ))
  
   (is (= \a (aget (into-array Char [\a \b \c]) 0)))                 ;;; Character/TYPE
+
+  (is (= [nil 1 2] (seq (into-array [nil 1 2]))))
   
   (let [types [Int32              ;;; Integer/TYPE
                Byte               ;;; Byte/TYPE

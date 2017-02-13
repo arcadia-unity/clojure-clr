@@ -19,19 +19,41 @@ using System.Reflection.Emit;
 
 namespace clojure.lang.CljCompiler.Ast
 {
-    class InvokeExpr : Expr
+    public class InvokeExpr : Expr
     {
+        public ParserContext ParsedContext { get; set; }
+        
         #region Data
 
         readonly Expr _fexpr;
+        public Expr FExpr { get { return _fexpr; } }
+
         readonly Object _tag;
+        public Object Tag { get { return _tag; } }
+        
         readonly IPersistentVector _args;
+        public IPersistentVector Args { get { return _args; } }
+        
         readonly string _source;
+        public string Source { get { return _source; } }
+        
         readonly IPersistentMap _spanMap;
+        public IPersistentMap SpanMap { get { return _spanMap; } }
+        
+        readonly bool _tailPosition;
+        public bool TailPosition { get { return _tailPosition; } }
+        
         bool _isProtocol = false;
+        public bool IsProtocol { get { return _isProtocol; } }
+        
         int _siteIndex = -1;
+        public int SiteIndex { get { return _siteIndex; } }
+        
         Type _protocolOn;
+        public Type ProtocolOn { get { return _protocolOn; } }
+        
         MethodInfo _onMethod;
+        public MethodInfo OnMethod { get { return _onMethod; } }
 
         static readonly Keyword _onKey = Keyword.intern("on");
         static readonly Keyword _methodMapKey = Keyword.intern("method-map");
@@ -40,12 +62,13 @@ namespace clojure.lang.CljCompiler.Ast
 
         #region Ctors
 
-        public InvokeExpr(string source, IPersistentMap spanMap, Symbol tag, Expr fexpr, IPersistentVector args)
+        public InvokeExpr(string source, IPersistentMap spanMap, Symbol tag, Expr fexpr, IPersistentVector args, bool tailPosition)
         {
             _source = source;
             _spanMap = spanMap;
             _fexpr = fexpr;
             _args = args;
+            _tailPosition = tailPosition;
 
             VarExpr varFexpr = fexpr as VarExpr;
 
@@ -83,23 +106,14 @@ namespace clojure.lang.CljCompiler.Ast
                 _tag = tag;
             else if (varFexpr != null)
             {
-                object arglists = RT.get(RT.meta(varFexpr.Var), Compiler.ArglistsKeyword);
-                object sigTag = null;
-                for (ISeq s = RT.seq(arglists); s != null; s = s.next())
-                {
-                    APersistentVector sig = (APersistentVector)s.first();
-                    int restOffset = sig.IndexOf(Compiler.AmpersandSym);
-                    if (args.count() == sig.count() || (restOffset > -1 && args.count() >= restOffset))
-                    {
-                        sigTag = Compiler.TagOf(sig);
-                        break;
-                    }
-                }
+                Var v = varFexpr.Var;
+
+                //object arglists = RT.get(RT.meta(v), Compiler.ArglistsKeyword);
+                object sigTag = SigTag(_args.count(), v);
                 _tag = sigTag ?? varFexpr.Tag;
             }
             else
                 _tag = null;
-
         }
 
         #endregion
@@ -120,8 +134,10 @@ namespace clojure.lang.CljCompiler.Ast
 
         #region Parsing
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Maintainability", "CA1502:AvoidExcessiveComplexity")]
         public static Expr Parse(ParserContext pcon, ISeq form)
         {
+            bool tailPosition = Compiler.InTailCall(pcon.Rhc);
             pcon = pcon.EvalOrExpr();
 
             Expr fexpr = Compiler.Analyze(pcon,form.first());
@@ -139,6 +155,28 @@ namespace clojure.lang.CljCompiler.Ast
                 }
             }
 
+            if ( RT.booleanCast(Compiler.GetCompilerOption(Compiler.DirectLinkingKeyword))
+                && varFexpr != null
+                && pcon.Rhc != RHC.Eval )
+            {
+                Var v = varFexpr.Var;
+                if ( ! v.isDynamic() && !RT.booleanCast(RT.get(v.meta(), Compiler.RedefKeyword, false)) && !RT.booleanCast(RT.get(v.meta(), RT.DeclaredKey, false)) )
+                {
+                    Symbol formTag = Compiler.TagOf(form);
+                    object arglists = RT.get(RT.meta(v), Compiler.ArglistsKeyword);
+                    int arity = RT.count(form.next());
+                    object sigtag = SigTag(arity, v);
+                    object vtag = RT.get(RT.meta(v), RT.TagKey);
+                    StaticInvokeExpr ret = StaticInvokeExpr.Parse(v, RT.next(form), formTag ?? sigtag ?? vtag) as StaticInvokeExpr;
+                    if (ret != null && !((Compiler.IsCompiling || Compiler.IsCompilingDefType) && GenContext.IsInternalAssembly(ret.Method.DeclaringType.Assembly)))
+                    {
+                        //Console.WriteLine("invoke direct: {0}", v);
+                        return ret;
+                    }
+                    //Console.WriteLine("NOT direct: {0}", v);
+                }
+            }
+
             if (varFexpr != null && pcon.Rhc != RHC.Eval)
             {
                 Var v = varFexpr.Var;
@@ -152,9 +190,9 @@ namespace clojure.lang.CljCompiler.Ast
                         string primc = FnMethod.PrimInterface(sargs);
                         if (primc != null)
                             return Compiler.Analyze(pcon,
-                                RT.listStar(Symbol.intern(".invokePrim"),
+                                ((IObj)RT.listStar(Symbol.intern(".invokePrim"),
                                             ((Symbol)form.first()).withMeta(RT.map(RT.TagKey, Symbol.intern(primc))),
-                                            form.next()));
+                                            form.next())).withMeta((IPersistentMap)RT.conj(RT.meta(v), RT.meta(form))));
                         break;
                     }
                 }
@@ -179,7 +217,8 @@ namespace clojure.lang.CljCompiler.Ast
                 (IPersistentMap)Compiler.SourceSpanVar.deref(), //Compiler.GetSourceSpanMap(form),
                 Compiler.TagOf(form),
                 fexpr,
-                args);
+                args,
+                tailPosition);
         }
 
         #endregion
@@ -193,7 +232,7 @@ namespace clojure.lang.CljCompiler.Ast
                 IFn fn = (IFn)_fexpr.Eval();
                 IPersistentVector argvs = PersistentVector.EMPTY;
                 for (int i = 0; i < _args.count(); i++)
-                    argvs = (IPersistentVector)argvs.cons(((Expr)_args.nth(i)).Eval());
+                    argvs = argvs.cons(((Expr)_args.nth(i)).Eval());
                 return fn.applyTo(RT.seq(Util.Ret1(argvs, argvs = null)));
             }
             catch (Compiler.CompilerException)
@@ -210,15 +249,32 @@ namespace clojure.lang.CljCompiler.Ast
 
         #region Code generation
 
+        static Object SigTag(int argcount, Var v)
+        {
+            Object arglists = RT.get(RT.meta(v), Compiler.ArglistsKeyword);
+            for (ISeq s = RT.seq(arglists); s != null; s = s.next())
+            {
+                APersistentVector sig = (APersistentVector)s.first();
+                int restOffset = sig.IndexOf(Compiler.AmpersandSym);
+                if (argcount == sig.count() || (restOffset > -1 && argcount >= restOffset))
+                    return Compiler.TagOf(sig);
+            }
+            return null;
+        }
+
         public void Emit(RHC rhc, ObjExpr objx, CljILGen ilg)
         {
-            GenContext.EmitDebugInfo(ilg, _spanMap);
+
 
             if (_isProtocol)
+            {
+                GenContext.EmitDebugInfo(ilg, _spanMap);
                 EmitProto(rhc, objx, ilg);
+            }
             else
             {
                 _fexpr.Emit(RHC.Expression, objx, ilg);
+                GenContext.EmitDebugInfo(ilg, _spanMap);
                 ilg.Emit(OpCodes.Castclass, typeof(IFn));
                 EmitArgsAndCall(0, rhc, objx, ilg);
             }
@@ -281,10 +337,11 @@ namespace clojure.lang.CljCompiler.Ast
             {
                 ilg.Emit(OpCodes.Castclass, _protocolOn);
                 MethodExpr.EmitTypedArgs(objx, ilg, _onMethod.GetParameters(), RT.subvec(_args, 1, _args.count()));
-                //if (rhc == RHC.Return)
+                // In JVM.  No necessary here.
+                //if (_tailPosition)
                 //{
-                //    ObjMethod2 method = (ObjMethod)Compiler.MethodVar.deref();
-                //    method.EmitClearLocals(context);
+                //    ObjMethod method = (ObjMethod)Compiler.MethodVar.deref();
+                //    method.EmitClearThis(ilg);
                 //}
                 ilg.Emit(OpCodes.Callvirt, _onMethod);
                 HostExpr.EmitBoxReturn(objx, ilg, _onMethod.ReturnType);                
@@ -292,6 +349,7 @@ namespace clojure.lang.CljCompiler.Ast
             ilg.MarkLabel(endLabel);
         }
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA1801:ReviewUnusedParameters", MessageId = "rhc")]
         void EmitArgsAndCall(int firstArgToEmit, RHC rhc, ObjExpr objx, CljILGen ilg)
         {
             for ( int i=firstArgToEmit; i< Math.Min(Compiler.MaxPositionalArity,_args.count()); i++ )
@@ -307,10 +365,11 @@ namespace clojure.lang.CljCompiler.Ast
                 MethodExpr.EmitArgsAsArray(restArgs,objx,ilg);
             }
 
-            //if ( rhc == RHC.Return )
+            // In JVM.  No necessary here.
+            //if (_tailPosition)
             //{
-            //    ObjMethod2 method = (ObjMethod2)Compiler.MethodVar.deref();
-            //    method.EmitClearLocals(context);
+            //    ObjMethod method = (ObjMethod)Compiler.MethodVar.deref();
+            //    method.EmitClearThis(ilg);
             //}
 
             MethodInfo mi = Compiler.Methods_IFn_invoke[Math.Min(Compiler.MaxPositionalArity+1,_args.count())];

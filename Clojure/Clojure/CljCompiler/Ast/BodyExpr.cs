@@ -16,11 +16,14 @@ using System;
 
 namespace clojure.lang.CljCompiler.Ast
 {
-    class BodyExpr : Expr, MaybePrimitiveExpr
+    public class BodyExpr : Expr, MaybePrimitiveExpr
     {
+        public ParserContext ParsedContext { get; set; }
+        
         #region Data
 
         readonly IPersistentVector _exprs;
+        public IPersistentVector Exprs { get { return _exprs; } }
 
         public Expr LastExpr
         {
@@ -59,6 +62,7 @@ namespace clojure.lang.CljCompiler.Ast
 
         public sealed class Parser : IParser
         {
+            [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1725:ParameterNamesShouldMatchBaseDeclaration", MessageId = "1#")]
             public Expr Parse(ParserContext pcon, object frms)
             {
                 ISeq forms = (ISeq)frms;

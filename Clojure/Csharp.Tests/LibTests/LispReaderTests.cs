@@ -496,10 +496,12 @@ namespace Clojure.Tests.LibTests
         }
 
         [Test]
-        [ExpectedException(typeof(ArgumentException))]
-        public void ColonDigitIsNotKeyword()
+        public void ColonDigitIsKeyword()
         {
-            ReadFromString(":1");
+            object o1 = ReadFromString(":1");
+            Expect(o1, TypeOf(typeof(Keyword)));
+            Expect(((Keyword)o1).Namespace, Null);
+            Expect(((Keyword)o1).Name, EqualTo("1"));
         }
 
         [Test]
@@ -902,9 +904,9 @@ namespace Clojure.Tests.LibTests
             Expect(io.meta().valAt(RT.LineKey), EqualTo(3));
             IPersistentMap sourceSpanMap = (IPersistentMap)io.meta().valAt(RT.SourceSpanKey);
             Expect(sourceSpanMap.valAt(RT.StartLineKey), EqualTo(3));
-            Expect(sourceSpanMap.valAt(RT.StartColumnKey), EqualTo(2));
+            Expect(sourceSpanMap.valAt(RT.StartColumnKey), EqualTo(3));
             Expect(sourceSpanMap.valAt(RT.EndLineKey), EqualTo(4));
-            Expect(sourceSpanMap.valAt(RT.EndColumnKey),EqualTo(4));            
+            Expect(sourceSpanMap.valAt(RT.EndColumnKey),EqualTo(5));            
         }
 
         #endregion

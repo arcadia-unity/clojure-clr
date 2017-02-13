@@ -27,21 +27,33 @@ using System.Reflection.Emit;
 
 namespace clojure.lang.CljCompiler.Ast
 {
-    class NewExpr : Expr
+    public class NewExpr : Expr
     {
+        public ParserContext ParsedContext { get; set; }
+        
         #region Data
 
-        readonly List<HostArg> _args;
+        readonly IList<HostArg> _args;
+        public IList<HostArg> Args { get { return _args; } }
+        
         readonly ConstructorInfo _ctor;
+        public ConstructorInfo Ctor { get { return _ctor; } }
+        
         readonly Type _type;
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1721:PropertyNamesShouldNotMatchGetMethods")]
+        public Type Type { get { return _type; } }
+        
         bool _isNoArgValueTypeCtor = false;
+        public bool IsNoArgValueTypeCtor { get { return _isNoArgValueTypeCtor; } }
+        
         readonly IPersistentMap _spanMap;
+        public IPersistentMap SpanMap { get { return _spanMap; } }
 
         #endregion
 
         #region Ctors
 
-        public NewExpr(Type type, List<HostArg> args, IPersistentMap spanMap)
+        public NewExpr(Type type, IList<HostArg> args, IPersistentMap spanMap)
         {
             _args = args;
             _type = type;
@@ -97,6 +109,7 @@ namespace clojure.lang.CljCompiler.Ast
 
         public sealed class Parser : IParser
         {
+            [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1725:ParameterNamesShouldMatchBaseDeclaration", MessageId = "1#")]
             public Expr Parse(ParserContext pcon, object frm)
             {
                 //int line = (int)Compiler.LINE.deref();
@@ -155,6 +168,7 @@ namespace clojure.lang.CljCompiler.Ast
                 ilg.Emit(OpCodes.Pop);
         }
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA1801:ReviewUnusedParameters", MessageId = "rhc")]
         private void EmitForMethod(RHC rhc, ObjExpr objx, CljILGen ilg)
         {
             EmitParamsForMethod(objx,ilg);
@@ -169,6 +183,7 @@ namespace clojure.lang.CljCompiler.Ast
             MethodExpr.EmitTypedArgs(objx, ilg, pis, _args);
         }
 
+       [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA1801:ReviewUnusedParameters", MessageId = "objx"), System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA1801:ReviewUnusedParameters", MessageId = "rhc")]
        private void EmitForNoArgValueTypeCtor(RHC rhc, ObjExpr objx, CljILGen ilg)
         {
             LocalBuilder loc = ilg.DeclareLocal(_type);
@@ -178,6 +193,7 @@ namespace clojure.lang.CljCompiler.Ast
             ilg.Emit(OpCodes.Box, _type);
         }
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA1801:ReviewUnusedParameters", MessageId = "rhc")]
         private void EmitComplexCall(RHC rhc, ObjExpr objx, CljILGen ilg)
         {
             // See the notes on MethodExpr.EmitComplexCall on why this is so complicated
@@ -281,8 +297,8 @@ namespace clojure.lang.CljCompiler.Ast
 
         private void EmitTargetExpression(ObjExpr objx, CljILGen ilg)
         {
-            if (Compiler.CompileStubOrigClassVar.isBound && Compiler.CompileStubOrigClassVar.deref() != null && objx.TypeBlder != null)
-                ilg.Emit(OpCodes.Ldtoken, objx.TypeBlder);
+            if (Compiler.CompileStubOrigClassVar.isBound && Compiler.CompileStubOrigClassVar.deref() != null && objx.TypeBuilder != null)
+                ilg.Emit(OpCodes.Ldtoken, objx.TypeBuilder);
             else if (_type != null)
                 ilg.Emit(OpCodes.Ldtoken, _type);
             else

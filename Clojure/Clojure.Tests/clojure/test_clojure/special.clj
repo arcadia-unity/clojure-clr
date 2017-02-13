@@ -53,13 +53,32 @@
     (is (= 2 d))))
 
 (deftest keywords-not-allowed-in-let-bindings
-  (is (thrown-with-msg? Exception #"Unsupported binding key: :a"
+  (is (thrown-with-msg? Exception #"Unsupported binding form: :a"
                         (eval '(let [:a 1] a))))
-  (is (thrown-with-msg? Exception #"Unsupported binding key: :a/b"
-                        (eval '(let [:a/b 1] b)))))
+  (is (thrown-with-msg? Exception #"Unsupported binding form: :a/b"
+                        (eval '(let [:a/b 1] b))))
+  (is (thrown-with-msg? Exception #"Unsupported binding form: :a"
+                        (eval '(let [[:a] [1]] a))))
+  (is (thrown-with-msg? Exception #"Unsupported binding form: :a/b"
+                        (eval '(let [[:a/b] [1]] b)))))
+
+(deftest namespaced-syms-only-allowed-in-map-destructuring
+  (is (thrown-with-msg? Exception #"Can't let qualified name: a/x"
+                        (eval '(let [a/x 1, [y] [1]] x))))
+  (is (thrown-with-msg? Exception #"Can't let qualified name: a/x"
+                        (eval '(let [[a/x] [1]] x)))))
 
 (require '[clojure.string :as s])
 (deftest resolve-keyword-ns-alias-in-destructuring
   (let [{:keys [::s/x ::s/y]} {:clojure.string/x 1 :clojure.string/y 2}]
     (is (= x 1))
     (is (= y 2))))
+
+(deftest quote-with-multiple-args
+  (let [ex (is (thrown? clojure.lang.Compiler+CompilerException               ;;; 
+                        (eval '(quote 1 2 3))))]
+    (is (= '(quote 1 2 3)
+           (-> ex
+               (.InnerException)                                                    ;;; .getCause
+               (ex-data)
+               (:form))))))

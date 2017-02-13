@@ -20,11 +20,13 @@ using System.Reflection.Emit;
 
 namespace clojure.lang.CljCompiler.Ast
 {
-    class StaticMethodExpr : MethodExpr
+    public class StaticMethodExpr : MethodExpr
     {
         #region Data
 
         readonly Type _type;
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1721:PropertyNamesShouldNotMatchGetMethods")]
+        public Type Type { get { return _type; } }
 
         static readonly Keyword warnOnBoxedKeyword = Keyword.intern("warn-on-boxed");
 
@@ -32,8 +34,8 @@ namespace clojure.lang.CljCompiler.Ast
 
         #region Ctors
 
-        public StaticMethodExpr(string source, IPersistentMap spanMap, Symbol tag, Type type, string methodName, List<Type> typeArgs, List<HostArg> args)
-            : base(source,spanMap,tag,methodName,typeArgs, args)
+        public StaticMethodExpr(string source, IPersistentMap spanMap, Symbol tag, Type type, string methodName, IList<Type> typeArgs, IList<HostArg> args, bool tailPosition)
+            : base(source,spanMap,tag,methodName,typeArgs, args, tailPosition)
         {
             _type = type;
             _method  = Reflector.GetMatchingMethod(spanMap, _type, _args, _methodName, typeArgs);
@@ -44,7 +46,7 @@ namespace clojure.lang.CljCompiler.Ast
             }
         }
 
-        public static bool IsBoxedMath(MethodInfo m)
+        public static bool IsBoxedMath(MethodBase m)
         {
             Type t = m.DeclaringType;
             if ( t == typeof(Numbers))
@@ -73,7 +75,7 @@ namespace clojure.lang.CljCompiler.Ast
 
         public override Type ClrType
         {
-            get { return _tag != null ? HostExpr.TagToType(_tag) : _method.ReturnType; }
+            get { return Compiler.RetType((_tag != null) ? HostExpr.TagToType(_tag) : null, (_method != null) ? _method.ReturnType : null); }
         }
 
         #endregion
@@ -126,6 +128,7 @@ namespace clojure.lang.CljCompiler.Ast
             return _method != null && Intrinsics.HasPred(_method);
         }
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA1801:ReviewUnusedParameters", MessageId = "rhc")]
         internal void EmitIntrinsicPredicate(RHC rhc, ObjExpr objx, CljILGen ilg, Label falseLabel)
         {
             GenContext.EmitDebugInfo(ilg, _spanMap);

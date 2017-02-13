@@ -36,6 +36,8 @@ namespace clojure.lang
         static readonly Symbol UNQUOTE = Symbol.intern("clojure.core", "unquote");
         static readonly Symbol UNQUOTE_SPLICING = Symbol.intern("clojure.core", "unquote-splicing");
         static readonly Symbol DEREF = Symbol.intern("clojure.core", "deref");
+        //static readonly Symbol READ_COND = Symbol.intern("clojure.core", "read-cond");
+        //static readonly Symbol READ_COND_SPLICING = Symbol.intern("clojure.core", "read-cond-splicing");
         //static readonly Symbol META = Symbol.intern("clojure.core", "meta");
         static readonly Symbol APPLY = Symbol.intern("clojure.core", "apply");
         static readonly Symbol CONCAT = Symbol.intern("clojure.core", "concat");
@@ -44,7 +46,7 @@ namespace clojure.lang
         static readonly Symbol VECTOR = Symbol.intern("clojure.core", "vector");
         static readonly Symbol WITH_META = Symbol.intern("clojure.core", "with-meta");
         static readonly Symbol LIST = Symbol.intern("clojure.core", "list");
-        static readonly Symbol SEQ = Symbol.intern("clojure.core","seq");
+        static readonly Symbol SEQ = Symbol.intern("clojure.core", "seq");
 
         static readonly Keyword UNKNOWN = Keyword.intern(null, "unknown");
 
@@ -56,14 +58,16 @@ namespace clojure.lang
         /// <summary>
         /// Dynamically bound var to a map from <see cref="Symbol">Symbol</see>s to ...
         /// </summary>
-        static Var GENSYM_ENV = Var.create(null).setDynamic();
+        static readonly Var GENSYM_ENV = Var.create(null).setDynamic();
 
         //sorted-map num->gensymbol
-        static Var ARG_ENV = Var.create(null).setDynamic();
+        static readonly Var ARG_ENV = Var.create(null).setDynamic();
 
+        // Dynamic var set to true in a read-cond context
+        static readonly Var READ_COND_ENV = Var.create(null).setDynamic();
 
         static IFn _ctorReader = new CtorReader();
-        
+
         #endregion
 
         #region Macro characters & #-dispatch
@@ -71,7 +75,7 @@ namespace clojure.lang
         static IFn[] _macros = new IFn[256];
         static IFn[] _dispatchMacros = new IFn[256];
 
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Performance", "CA1810:InitializeReferenceTypeStaticFieldsInline")]
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Maintainability", "CA1506:AvoidExcessiveClassCoupling"), System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Performance", "CA1810:InitializeReferenceTypeStaticFieldsInline")]
         static LispReader()
         {
             _macros['"'] = new StringReader();
@@ -102,6 +106,7 @@ namespace clojure.lang
             _dispatchMacros['!'] = new CommentReader();
             _dispatchMacros['<'] = new UnreadableReader();
             _dispatchMacros['_'] = new DiscardReader();
+            _dispatchMacros['?'] = new ConditionalReader();
         }
 
         static bool isMacro(int ch)
@@ -123,22 +128,105 @@ namespace clojure.lang
 
         #region main entry point -- read
 
-        // There is really no reason for the main entry point to have an isRecursive flag, is there?
 
+        // Reader opts
+
+        internal static readonly Keyword OPT_EOF = Keyword.intern(null, "eof");
+        internal static readonly Keyword OPT_FEATURES = Keyword.intern(null, "features");
+        internal static readonly Keyword OPT_READ_COND = Keyword.intern(null, "read-cond");
+
+        // EOF special value to throw on eof
+        static readonly Keyword EOFTHROW = Keyword.intern(null, "eofthrow");
+
+        // Platform features - always installed
+        static readonly Keyword PLATFORM_KEY = Keyword.intern(null, "cljr");
+        static readonly Object PLATFORM_FEATURES = PersistentHashSet.create(PLATFORM_KEY);
+
+        // Reader conditional options - use with :read-cond
+        internal static readonly Keyword COND_ALLOW = Keyword.intern(null, "allow");
+        internal static readonly Keyword COND_PRESERVE = Keyword.intern(null, "preserve");
+
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly")]
+        static public Object read(PushbackTextReader r, Object opts)
+        {
+            bool eofIsError = true;
+            object eofValue = null;
+            IPersistentMap optsMap = opts as IPersistentMap;
+            if (optsMap != null)
+            {
+                Object eof = optsMap.valAt(OPT_EOF, EOFTHROW);
+                if (!EOFTHROW.Equals(eof))
+                {
+                    eofIsError = false;
+                    eofValue = eof;
+                }
+            }
+            return read(r, eofIsError, eofValue, false, opts);
+        }
+        
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly")]
         public static object read(PushbackTextReader r,
             bool eofIsError,
             object eofValue,
             bool isRecursive)
         {
+            return read(r, eofIsError, eofValue, isRecursive, PersistentHashMap.EMPTY);
+        }
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly")]
+        static public Object read(PushbackTextReader r, bool eofIsError, object eofValue, bool isRecursive, object opts)
+        {
+            return read(r, eofIsError, eofValue, null, null, isRecursive, opts, null);
+        }
+
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly")]
+        static private Object read(PushbackTextReader r, bool eofIsError, Object eofValue, bool isRecursive, Object opts, Object pendingForms)
+        {
+            return read(r, eofIsError, eofValue, null, null, isRecursive, opts, EnsurePending(pendingForms));
+        }
+
+        static Object EnsurePending(object pendingForms)
+        {
+            if (pendingForms == null)
+                return new LinkedList<Object>();
+            else
+                return pendingForms;
+        }
+
+        static private Object InstallPlatformFeature(Object opts)
+        {
+            if (opts == null)
+                return RT.mapUniqueKeys(LispReader.OPT_FEATURES, PLATFORM_FEATURES);
+            else
+            {
+                IPersistentMap mopts = (IPersistentMap)opts;
+                Object features = mopts.valAt(OPT_FEATURES);
+                if (features == null)
+                    return mopts.assoc(LispReader.OPT_FEATURES, PLATFORM_FEATURES);
+                else
+                    return mopts.assoc(LispReader.OPT_FEATURES, RT.conj((IPersistentSet)features, PLATFORM_KEY));
+            }
+        }
+
+        static private Object read(PushbackTextReader r, bool eofIsError, object eofValue, char? returnOn, object returnOnValue, bool isRecursive, object opts, object pendingForms)
+        {
             if (UNKNOWN.Equals(RT.ReadEvalVar.deref()))
                 throw new InvalidOperationException("Reading disallowed - *read-eval* bound to :unknown");
+
+            opts = InstallPlatformFeature(opts);
 
             try
             {
                 for (; ; )
                 {
+                    var pfl = pendingForms as LinkedList<Object>;
+                    if (pfl != null && pfl.Count != 0)
+                    {
+                        object val = pfl.First.Value;
+                        pfl.RemoveFirst();
+                        return val;
+                    }
+
                     int ch = r.Read();
 
                     while (isWhitespace(ch))
@@ -151,18 +239,21 @@ namespace clojure.lang
                         return eofValue;
                     }
 
+                    if (returnOn.HasValue && (returnOn.Value == ch))
+                    {
+                        return returnOnValue;
+                    }
+
                     if (Char.IsDigit((char)ch))
                     {
                         object n = readNumber(r, (char)ch);
-                        return RT.suppressRead() ? null : n;
+                        return n;
                     }
 
                     IFn macroFn = getMacro(ch);
                     if (macroFn != null)
                     {
-                        object ret = macroFn.invoke(r, (char)ch);
-                        if (RT.suppressRead())
-                            return null;
+                        object ret = macroFn.invoke(r, (char)ch, opts, pendingForms);
                         // no op macros return the reader
                         if (ret == r)
                             continue;
@@ -176,7 +267,7 @@ namespace clojure.lang
                         {
                             Unread(r, ch2);
                             object n = readNumber(r, (char)ch);
-                            return RT.suppressRead() ? null : n;
+                            return n;
                         }
                         Unread(r, ch2);
                     }
@@ -194,7 +285,7 @@ namespace clojure.lang
                             throw new EndOfStreamException("EOF while reading symbol");
                         return eofValue;
                     }
-                    return RT.suppressRead() ? null : InterpretToken(rawToken, token, mask);
+                    return InterpretToken(rawToken, token, mask);
                 }
             }
             catch (Exception e)
@@ -210,29 +301,25 @@ namespace clojure.lang
             }
         }
 
-        private static object ReadAux(PushbackTextReader r)
+        private static object ReadAux(PushbackTextReader r, object opts, object pendingForms)
         {
-            return read(r, true, null, true);
+            return read(r, true, null, true, opts, pendingForms);
         }
 
         #endregion
-        
+
         #region Character hacking
 
-        static void Unread(PushbackTextReader r, int ch)
+        static internal void Unread(PushbackTextReader r, int ch)
         {
             if (ch != -1)
                 r.Unread(ch);
         }
 
-
-        static bool isWhitespace(int ch)
+        static internal bool isWhitespace(int ch)
         {
             return Char.IsWhiteSpace((char)ch) || ch == ',';
         }
-
-
-
 
         // Roughly a match to Java Character.digit(char,int),
         // though I don't handle all unicode digits.
@@ -242,7 +329,7 @@ namespace clojure.lang
                 return c - '0' < radix ? c - '0' : -1;
 
             if ('A' <= c && c <= 'Z')
-                return c - 'A' < radix - 10 ? c - 'A' + 10: -1;
+                return c - 'A' < radix - 10 ? c - 'A' + 10 : -1;
 
             if ('a' <= c && c <= 'z')
                 return c - 'a' < radix - 10 ? c - 'a' + 10 : -1;
@@ -292,53 +379,38 @@ namespace clojure.lang
 
         #endregion
 
-        #region  Other 
-        
-        static List<Object> ReadDelimitedList(char delim, PushbackTextReader r, bool isRecursive)
+        #region  Other
+
+        // Sentinel values for reading lists
+        static readonly object READ_EOF = new object();
+        static readonly object READ_FINISHED = new object();
+
+        static List<Object> ReadDelimitedList(char delim, PushbackTextReader r, bool isRecursive, object opts, object pendingForms)
         {
             LineNumberingTextReader lntr = r as LineNumberingTextReader;
-            int firstLine = lntr != null  ? lntr.LineNumber : -1;
-       
+            int firstLine = lntr != null ? lntr.LineNumber : -1;
+
             List<Object> a = new List<object>();
 
             for (; ; )
             {
-                int ch = r.Read();
 
-                while (isWhitespace(ch))
-                    ch = r.Read();
+                Object form = read(r, false, READ_EOF, delim, READ_FINISHED, isRecursive, opts, pendingForms);
 
-                if (ch == -1)
+                if (form == READ_EOF)
                 {
                     if (firstLine < 0)
                         throw new EndOfStreamException("EOF while reading");
                     else
                         throw new EndOfStreamException("EOF while reading, starting at line " + firstLine);
                 }
-
-                if (ch == delim)
+                else if (form == READ_FINISHED)
                 {
-                    break;
+                    return a;
                 }
 
-                IFn macroFn = getMacro(ch);
-                if (macroFn != null)
-                {
-                    Object mret = macroFn.invoke(r, (char)ch);
-                    //no op macros return the reader
-                    if (mret != r)
-                        a.Add(mret);
-                }
-                else
-                {
-                    Unread(r, ch);
-                    object o = read(r, true, null, isRecursive);
-                    if (o != r)
-                        a.Add(o);
-                }
+                a.Add(form);
             }
-
-            return a;
         }
 
         static Symbol garg(int n)
@@ -455,14 +527,14 @@ namespace clojure.lang
 
         public static object InterpretToken(string token)
         {
-            return InterpretToken(token,token,token);
+            return InterpretToken(token, token, token);
         }
 
         public static object InterpretToken(string rawToken, string token, string mask)
         {
-            if ( token.Equals("nil") )
+            if (token.Equals("nil"))
                 return null;
-            else if ( token.Equals("true") )
+            else if (token.Equals("true"))
                 return true;  // RT.T
             else if (token.Equals("false"))
                 return false; // RT.F;
@@ -478,8 +550,10 @@ namespace clojure.lang
 
         //static Regex symbolPat = new Regex("[:]?([\\D&&[^/]].*/)?(/|[\\D&&[^/]][^/]*)");
         static Regex symbolPat = new Regex("^[:]?([^\\p{Nd}/].*/)?(/|[^\\p{Nd}/][^/]*)$");
+        static Regex keywordPat = new Regex("^[:]?([^/].*/)?(/|[^/][^/]*)$");
 
-        private static void ExtractNamesUsingMask(string token,string maskNS,string maskName, out string ns, out string name)
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA1801:ReviewUnusedParameters", MessageId = "maskName")]
+        private static void ExtractNamesUsingMask(string token, string maskNS, string maskName, out string ns, out string name)
         {
             if (String.IsNullOrEmpty(maskNS))
             {
@@ -488,7 +562,7 @@ namespace clojure.lang
             }
             else
             {
-                ns = token.Substring(0, maskNS.Length-1);
+                ns = token.Substring(0, maskNS.Length - 1);
                 name = token.Substring(maskNS.Length);
             }
         }
@@ -508,7 +582,7 @@ namespace clojure.lang
 
                 if (mask.StartsWith("::"))
                 {
-                    Match m2 = symbolPat.Match(mask.Substring(2));
+                    Match m2 = keywordPat.Match(mask.Substring(2));
                     if (!m2.Success)
                         return null;
 
@@ -533,13 +607,13 @@ namespace clojure.lang
 
                 if (isKeyword)
                 {
-                    Match m2 = symbolPat.Match(mask.Substring(1));
+                    Match m2 = keywordPat.Match(mask.Substring(1));
                     if (!m2.Success)
                         return null;
                     string ns;
                     string name;
                     ExtractNamesUsingMask(token.Substring(1), m2.Groups[1].Value, m2.Groups[2].Value, out ns, out name);
-                    return Keyword.intern(ns, name); 
+                    return Keyword.intern(ns, name);
                 }
                 else
                 {
@@ -656,7 +730,7 @@ namespace clojure.lang
                 return true;
 
             // Begins with +/- and a digit
-            
+
             if ((firstChar == '+' || firstChar == '-') && s.Length >= 2 && Char.IsDigit(s[1]))
                 return true;
 
@@ -671,7 +745,7 @@ namespace clojure.lang
             foreach (char c in s)
             {
                 sb.Append(c);
-                if ( c == '|')
+                if (c == '|')
                     sb.Append('|');
             }
             sb.Append("|");
@@ -682,7 +756,7 @@ namespace clojure.lang
 
         #region Reading numbers
 
-        static Regex intRE   = new Regex("^([-+]?)(?:(0)|([1-9][0-9]*)|0[xX]([0-9A-Fa-f]+)|0([0-7]+)|([1-9][0-9]?)[rR]([0-9A-Za-z]+)|0[0-9]+)(N)?$");
+        static Regex intRE = new Regex("^([-+]?)(?:(0)|([1-9][0-9]*)|0[xX]([0-9A-Fa-f]+)|0([0-7]+)|([1-9][0-9]?)[rR]([0-9A-Za-z]+)|0[0-9]+)(N)?$");
         static Regex ratioRE = new Regex("^([-+]?[0-9]+)/([0-9]+)$");
         static Regex floatRE = new Regex("^([-+]?[0-9]+(\\.[0-9]*)?([eE][-+]?[0-9]+)?)(M)?$");
 
@@ -712,7 +786,7 @@ namespace clojure.lang
         public static object MatchNumber(string s)
         {
             Match m = intRE.Match(s);
-            if ( m.Success )
+            if (m.Success)
             {
                 if (m.Groups[2].Success)
                 {
@@ -765,7 +839,7 @@ namespace clojure.lang
 
             if (m.Success)
             {
-                if ( m.Groups[4].Success )
+                if (m.Groups[4].Success)
                 {
                     string val = m.Groups[1].Value;
                     // MS implementation of java.util.BigDecimal has a bug when the string has a leading+
@@ -785,7 +859,7 @@ namespace clojure.lang
                     numerString = numerString.Substring(1);
                 //return Numbers.BIDivide(new BigInteger(numerString), new BigInteger(denomString));
                 return Numbers.divide(
-                    Numbers.ReduceBigInt(BigInt.fromBigInteger(BigInteger.Parse(numerString))), 
+                    Numbers.ReduceBigInt(BigInt.fromBigInteger(BigInteger.Parse(numerString))),
                     Numbers.ReduceBigInt(BigInt.fromBigInteger(BigInteger.Parse(denomString))));
             }
             return null;
@@ -797,19 +871,21 @@ namespace clojure.lang
 
         public abstract class ReaderBase : AFn
         {
-           public override object invoke(object arg1, object arg2)
+            [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1725:ParameterNamesShouldMatchBaseDeclaration", MessageId = "2#")]
+            [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1725:ParameterNamesShouldMatchBaseDeclaration", MessageId = "3#")]
+            public override object invoke(object arg1, object arg2, object opts, object pendingForms)
             {
-                return Read((PushbackTextReader)arg1, (Char)arg2);
+                return Read((PushbackTextReader)arg1, (Char)arg2, opts, pendingForms);
             }
 
-           protected abstract object Read(PushbackTextReader r, char c);
+            protected abstract object Read(PushbackTextReader r, char c, object opts, object pendingForms);
         }
 
         #region CharacterReader
 
         public sealed class CharacterReader : ReaderBase
         {
-            protected override object Read(PushbackTextReader r, char backslash)
+            protected override object Read(PushbackTextReader r, char backslash, object opts, object pendingForms)
             {
                 int ch = r.Read();
                 if (ch == -1)
@@ -856,7 +932,7 @@ namespace clojure.lang
 
         public sealed class StringReader : ReaderBase
         {
-            protected override object Read(PushbackTextReader r, char doublequote)
+            protected override object Read(PushbackTextReader r, char doublequote, object opts, object pendingForms)
             {
                 StringBuilder sb = new StringBuilder();
 
@@ -923,7 +999,7 @@ namespace clojure.lang
 
         public sealed class CommentReader : ReaderBase
         {
-            protected override object Read(PushbackTextReader r, char semicolon)
+            protected override object Read(PushbackTextReader r, char semicolon, object opts, object pendingForms)
             {
                 int ch;
                 do
@@ -936,9 +1012,9 @@ namespace clojure.lang
 
         public sealed class DiscardReader : ReaderBase
         {
-            protected override object Read(PushbackTextReader r, char underscore)
+            protected override object Read(PushbackTextReader r, char underscore, object opts, object pendingForms)
             {
-                ReadAux(r);
+                ReadAux(r, opts, EnsurePending(pendingForms));
                 return r;
             }
         }
@@ -949,7 +1025,7 @@ namespace clojure.lang
 
         public sealed class ListReader : ReaderBase
         {
-            protected override object Read(PushbackTextReader r, char leftparen)
+            protected override object Read(PushbackTextReader r, char leftparen, object opts, object pendingForms)
             {
                 int startLine = -1;
                 int startCol = -1;
@@ -960,7 +1036,7 @@ namespace clojure.lang
                     startLine = lntr.LineNumber;
                     startCol = lntr.ColumnNumber;
                 }
-                IList<Object> list = ReadDelimitedList(')', r, true);
+                IList<Object> list = ReadDelimitedList(')', r, true, opts, EnsurePending(pendingForms));
                 if (list.Count == 0)
                     return PersistentList.EMPTY;
                 IObj s = (IObj)PersistentList.create((IList)list);
@@ -984,17 +1060,17 @@ namespace clojure.lang
 
         public sealed class VectorReader : ReaderBase
         {
-            protected override object Read(PushbackTextReader r, char leftparen)
+            protected override object Read(PushbackTextReader r, char leftparen, object opts, object pendingForms)
             {
-                return LazilyPersistentVector.create(ReadDelimitedList(']', r, true));
+                return LazilyPersistentVector.create(ReadDelimitedList(']', r, true, opts, EnsurePending(pendingForms)));
             }
         }
 
         public sealed class MapReader : ReaderBase
         {
-            protected override object Read(PushbackTextReader r, char leftbrace)
+            protected override object Read(PushbackTextReader r, char leftbrace, object opts, object pendingForms)
             {
-                Object[] a = ReadDelimitedList('}', r, true).ToArray();
+                Object[] a = ReadDelimitedList('}', r, true, opts, EnsurePending(pendingForms)).ToArray();
                 if ((a.Length & 1) == 1)
                     throw new ArgumentException("Map literal must contain an even number of forms");
                 return RT.map(a);
@@ -1003,15 +1079,15 @@ namespace clojure.lang
 
         public sealed class SetReader : ReaderBase
         {
-            protected override object Read(PushbackTextReader r, char leftbracket)
+            protected override object Read(PushbackTextReader r, char leftbracket, object opts, object pendingForms)
             {
-                return PersistentHashSet.createWithCheck(ReadDelimitedList('}', r, true));
+                return PersistentHashSet.createWithCheck(ReadDelimitedList('}', r, true, opts, EnsurePending(pendingForms)));
             }
         }
 
         public sealed class UnmatchedDelimiterReader : ReaderBase
         {
-            protected override object Read(PushbackTextReader reader, char rightdelim)
+            protected override object Read(PushbackTextReader reader, char rightdelim, object opts, object pendingForms)
             {
                 throw new ArgumentException("Unmatched delimiter: " + rightdelim);
             }
@@ -1030,10 +1106,10 @@ namespace clojure.lang
                 _sym = sym;
             }
 
-            protected override object Read(PushbackTextReader r, char quote)
+            protected override object Read(PushbackTextReader r, char quote, object opts, object pendingForms)
             {
-                //object o = read(r, true, null, true);
-                object o = ReadAux(r);
+                //object o = read(r, true, null, true, opts, pendingForms);
+                object o = ReadAux(r, opts, EnsurePending(pendingForms));
                 return RT.list(_sym, o);
             }
         }
@@ -1046,14 +1122,14 @@ namespace clojure.lang
             public DeprecatedWrappingReader(Symbol sym, string macro)
             {
                 _sym = sym;
-                _macro = macro;                
+                _macro = macro;
             }
 
-            protected override object Read(PushbackTextReader r, char quote)
+            protected override object Read(PushbackTextReader r, char quote, object opts, object pendingForms)
             {
-                Console.WriteLine("WARNING: read macro {0} is deprecated; use {1} instead",_macro,_sym.getName());
-                //object o = read(r, true, null, true);
-                object o = ReadAux(r);
+                Console.WriteLine("WARNING: read macro {0} is deprecated; use {1} instead", _macro, _sym.getName());
+                //object o = read(r, true, null, true, opts, pendingForms);
+                object o = ReadAux(r, opts, EnsurePending(pendingForms));
                 return RT.list(_sym, o);
             }
         }
@@ -1064,13 +1140,13 @@ namespace clojure.lang
 
         public sealed class SyntaxQuoteReader : ReaderBase
         {
-            protected override object Read(PushbackTextReader r, char backquote)
+            protected override object Read(PushbackTextReader r, char backquote, object opts, object pendingForms)
             {
                 try
                 {
                     Var.pushThreadBindings(RT.map(GENSYM_ENV, PersistentHashMap.EMPTY));
-                    //object form = read(r, true, null, true);
-                    object form = ReadAux(r);
+                    //object form = read(r, true, null, true, opts, pendingForms);
+                    object form = ReadAux(r, opts, EnsurePending(pendingForms));
                     return syntaxQuote(form);
                 }
                 finally
@@ -1082,7 +1158,7 @@ namespace clojure.lang
             static object syntaxQuote(object form)
             {
                 bool checkMeta;
-                object ret = AnalyzeSyntaxQuote(form,out checkMeta);
+                object ret = AnalyzeSyntaxQuote(form, out checkMeta);
 
                 if (checkMeta)
                 {
@@ -1100,7 +1176,8 @@ namespace clojure.lang
                 return ret;
             }
 
-            private static object AnalyzeSyntaxQuote(object form,out bool checkMeta)
+            [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Maintainability", "CA1502:AvoidExcessiveComplexity")]
+            private static object AnalyzeSyntaxQuote(object form, out bool checkMeta)
             {
                 checkMeta = true;
 
@@ -1152,7 +1229,6 @@ namespace clojure.lang
                     return RT.list(Compiler.QuoteSym, sym);
                 }
 
-
                 if (isUnquote(form))
                 {
                     checkMeta = false;
@@ -1161,7 +1237,7 @@ namespace clojure.lang
 
                 if (isUnquoteSplicing(form))
                     throw new ArgumentException("splice not in list");
-                
+
                 if (form is IPersistentCollection)
                 {
                     if (form is IRecord)
@@ -1184,8 +1260,8 @@ namespace clojure.lang
                     {
                         return RT.list(APPLY, HASHSET, RT.list(SEQ, RT.cons(CONCAT, sqExpandList(s.seq()))));
                     }
-                    
-                    
+
+
                     if (form is ISeq || form is IPersistentList)
                     {
                         ISeq seq = RT.seq(form);
@@ -1197,7 +1273,7 @@ namespace clojure.lang
                     else
                         throw new InvalidOperationException("Unknown Collection type");
                 }
-                
+
                 if (form is Keyword
                         || Util.IsNumeric(form)
                         || form is Char
@@ -1242,22 +1318,23 @@ namespace clojure.lang
 
         sealed class UnquoteReader : ReaderBase
         {
-            protected override object Read(PushbackTextReader r, char comma)
+            protected override object Read(PushbackTextReader r, char comma, object opts, object pendingForms)
             {
                 int ch = r.Read();
                 if (ch == -1)
                     throw new EndOfStreamException("EOF while reading character");
+                pendingForms = EnsurePending(pendingForms);
                 if (ch == '@')
                 {
-                    //object o = read(r, true, null, true);
-                    object o = ReadAux(r);
+                    //object o = read(r, true, null, true, opts, pendingForms);
+                    object o = ReadAux(r, opts, pendingForms);
                     return RT.list(UNQUOTE_SPLICING, o);
                 }
                 else
                 {
                     Unread(r, ch);
-                    //object o = read(r, true, null, true);
-                    object o = ReadAux(r);
+                    //object o = read(r, true, null, true, opts, pendingForms);
+                    object o = ReadAux(r, opts, pendingForms);
                     //return new Unquote(o);
                     // per Rev 1184
                     return RT.list(UNQUOTE, o);
@@ -1270,7 +1347,7 @@ namespace clojure.lang
         // Per rev 1184
         static bool isUnquote(object form)
         {
-            return form is ISeq && Util.equals(RT.first(form),UNQUOTE);
+            return form is ISeq && Util.equals(RT.first(form), UNQUOTE);
         }
 
         static bool isUnquoteSplicing(object form)
@@ -1286,7 +1363,7 @@ namespace clojure.lang
 
         public sealed class DispatchReader : ReaderBase
         {
-            protected override object Read(PushbackTextReader r, char hash)
+            protected override object Read(PushbackTextReader r, char hash, object opts, object pendingForms)
             {
                 int ch = r.Read();
                 if (ch == -1)
@@ -1296,14 +1373,15 @@ namespace clojure.lang
                 if (fn == null)
                 {
                     Unread(r, ch);
-                    object result = _ctorReader.invoke(r,(char) ch);
+                    pendingForms = EnsurePending(pendingForms);
+                    object result = _ctorReader.invoke(r, (char)ch, opts, pendingForms);
 
                     if (result != null)
                         return result;
                     else
                         throw new InvalidOperationException(String.Format("No dispatch macro for: {0}", (char)ch));
                 }
-                return fn.invoke(r, (char)ch);
+                return fn.invoke(r, (char)ch, opts, pendingForms);
             }
         }
 
@@ -1313,8 +1391,7 @@ namespace clojure.lang
 
         public sealed class MetaReader : ReaderBase
         {
-
-            protected override object Read(PushbackTextReader r, char caret)
+            protected override object Read(PushbackTextReader r, char caret, object opts, object pendingForms)
             {
                 int startLine = -1;
                 int startCol = -1;
@@ -1326,9 +1403,11 @@ namespace clojure.lang
                     startCol = lntr.ColumnNumber;
                 }
 
+                pendingForms = EnsurePending(pendingForms);
+
                 IPersistentMap metaAsMap;
                 {
-                    object meta = ReadAux(r);
+                    object meta = ReadAux(r, opts, pendingForms);
 
                     if (meta is Symbol || meta is String)
                         metaAsMap = RT.map(RT.TagKey, meta);
@@ -1338,12 +1417,12 @@ namespace clojure.lang
                         throw new ArgumentException("Metadata must be Symbol,Keyword,String or Map");
                 }
 
-                object o = ReadAux(r);
+                object o = ReadAux(r, opts, pendingForms);
                 if (o is IMeta)
                 {
                     if (startLine != -1 && o is ISeq)
                         metaAsMap = metaAsMap.assoc(RT.LineKey, startLine)
-                            .assoc(RT.ColumnKey,startCol)
+                            .assoc(RT.ColumnKey, startCol)
                             .assoc(RT.SourceSpanKey, RT.map(
                                 RT.StartLineKey, startLine,
                                 RT.StartColumnKey, startCol,
@@ -1375,10 +1454,10 @@ namespace clojure.lang
 
         public sealed class VarReader : ReaderBase
         {
-            protected override object Read(PushbackTextReader r, char quote)
+            protected override object Read(PushbackTextReader r, char quote, object opts, object pendingForms)
             {
-                //object o = read(r, true, null, true);
-                object o = ReadAux(r);
+                //object o = read(r, true, null, true, opts, pendingForms);
+                object o = ReadAux(r, opts, EnsurePending(pendingForms));
                 //		if(o instanceof Symbol)
                 //			{
                 //			Object v = Compiler.maybeResolveIn(Compiler.currentNS(), (Symbol) o);
@@ -1395,7 +1474,7 @@ namespace clojure.lang
 
         public sealed class RegexReader : ReaderBase
         {
-            protected override object Read(PushbackTextReader r, char doublequote)
+            protected override object Read(PushbackTextReader r, char doublequote, object opts, object pendingForms)
             {
                 StringBuilder sb = new StringBuilder();
                 for (int ch = r.Read(); ch != '"'; ch = r.Read())
@@ -1419,11 +1498,12 @@ namespace clojure.lang
 
         #region Fn and Arg readers
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "Fn")]
         public sealed class FnReader : ReaderBase
         {
             //static ListReader _listReader = new ListReader();
 
-            protected override object Read(PushbackTextReader r, char lparen)
+            protected override object Read(PushbackTextReader r, char lparen, object opts, object pendingForms)
             {
                 if (ARG_ENV.deref() != null)
                     throw new InvalidOperationException("Nested #()s are not allowed");
@@ -1431,8 +1511,8 @@ namespace clojure.lang
                 {
                     Var.pushThreadBindings(RT.map(ARG_ENV, PersistentTreeMap.EMPTY));
                     r.Unread('(');
-                    ////object form = ReadAux(r, true, null, true);
-                    object form = ReadAux(r);
+                    ////object form = ReadAux(r, true, null, true, opts, pendingForms);
+                    object form = ReadAux(r, opts, EnsurePending(pendingForms));
                     //object form = _listReader.invoke(r, '(');
 
                     IPersistentVector args = PersistentVector.EMPTY;
@@ -1469,7 +1549,7 @@ namespace clojure.lang
 
         sealed class ArgReader : ReaderBase
         {
-            protected override object Read(PushbackTextReader r, char pct)
+            protected override object Read(PushbackTextReader r, char pct, object opts, object pendingForms)
             {
                 //if (ARG_ENV.deref() == null)
                 //    return interpretToken(readToken(r, '%'));
@@ -1477,7 +1557,7 @@ namespace clojure.lang
                 {
                     return InterpretToken(readSimpleToken(r, '%'));
                 }
-                
+
                 int ch = r.Read();
                 Unread(r, ch);
                 //% alone is first arg
@@ -1485,8 +1565,8 @@ namespace clojure.lang
                 {
                     return registerArg(1);
                 }
-                //object n = ReadAux(r, true, null, true);
-                object n = ReadAux(r);
+                //object n = ReadAux(r, true, null, true, opts, pendingForms);
+                object n = ReadAux(r, opts, EnsurePending(pendingForms));
                 if (n.Equals(Compiler.AmpersandSym))
                     return registerArg(-1);
                 if (!Util.IsNumeric(n))
@@ -1518,15 +1598,15 @@ namespace clojure.lang
         //TODO: Need to figure out who to deal with typenames in the context of multiple loaded assemblies.
         public sealed class EvalReader : ReaderBase
         {
-            protected override object Read(PushbackTextReader r, char eq)
+            protected override object Read(PushbackTextReader r, char eq, object opts, object pendingForms)
             {
                 if (!RT.booleanCast(RT.ReadEvalVar.deref()))
                 {
                     throw new InvalidOperationException("EvalReader not allowed when *read-eval* is false");
                 }
 
-                Object o = read(r, true, null, true);
-                if (o is Symbol  )
+                Object o = read(r, true, null, true, opts, EnsurePending(pendingForms));
+                if (o is Symbol)
                 {
                     return RT.classForNameE(o.ToString());
                 }
@@ -1553,7 +1633,7 @@ namespace clojure.lang
                         Object[] args = RT.toArray(RT.next(o));
                         return Reflector.InvokeStaticMethod(fs.Namespace, fs.Name, args);
                     }
-                
+
                     Object v = Compiler.maybeResolveIn(Compiler.CurrentNamespace, fs);
                     if (v is Var)
                     {
@@ -1572,20 +1652,33 @@ namespace clojure.lang
 
         public sealed class CtorReader : ReaderBase
         {
-            protected override object Read(PushbackTextReader r, char c)
+            protected override object Read(PushbackTextReader r, char c, object opts, object pendingForms)
             {
-                Object name = read(r, true, null, false);
+                pendingForms = EnsurePending(pendingForms);
+
+                Object name = read(r, true, null, false, opts, pendingForms);
                 Symbol sym = name as Symbol;
                 if (sym == null)
                     throw new ArgumentException("Reader tag must be a symbol");
-                return sym.Name.Contains(".") ? ReadRecord(r, sym) : ReadTagged(r, sym);
+
+                Object form = read(r, true, null, true, opts, pendingForms);
+
+                if (IsPreserveReadCond(opts) || RT.suppressRead())
+                {
+                    return TaggedLiteral.create(sym, form);
+                }
+                else
+                {
+                    return sym.Name.Contains(".") ? ReadRecord(form, sym, opts, pendingForms) : ReadTagged(form, sym, opts, pendingForms);
+                }
+
             }
 
 
-            static object ReadTagged(PushbackTextReader r, Symbol tag)
+            [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA1801:ReviewUnusedParameters", MessageId = "opts"), 
+             System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA1801:ReviewUnusedParameters", MessageId = "pendingForms")]
+            static object ReadTagged(object o, Symbol tag, object opts, object pendingForms)
             {
-                object o = read(r, true, null, true);
-
                 ILookup dataReaders = (ILookup)RT.DataReadersVar.deref();
                 IFn dataReader = (IFn)RT.get(dataReaders, tag);
                 if (dataReader == null)
@@ -1604,7 +1697,9 @@ namespace clojure.lang
                 return dataReader.invoke(o);
             }
 
-            static object ReadRecord(PushbackTextReader r, Symbol recordName)
+            [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA1801:ReviewUnusedParameters", MessageId = "opts"), 
+             System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA1801:ReviewUnusedParameters", MessageId = "pendingForms")]
+            static object ReadRecord(object form, Symbol recordName, object opts, object pendingForms)
             {
                 bool readeval = RT.booleanCast(RT.ReadEvalVar.deref());
                 if (!readeval)
@@ -1612,58 +1707,42 @@ namespace clojure.lang
 
                 Type recordType = RT.classForNameE(recordName.ToString());
 
-                char endch;
-                bool shortForm = true;
+                IPersistentVector recordEntries;
+                IPersistentMap vals;
 
-                int ch = r.Read();
-
-                // flush whitespace
-                while (isWhitespace(ch))
-                    ch = r.Read();
-
-                // A defrecord ctor can take two forms.  Check for map->R version first.
-                if (ch == '{')
-                {
-                    endch = '}';
-                    shortForm = false;
-                }
-                else if (ch == '[')
-                    endch = ']';
-                else
-                    throw new ArgumentException(String.Format("Unreadable constructor form starting with \"#{0}{1}\"", recordName, (char)ch));
-
-                object[] recordEntries = ReadDelimitedList(endch, r, true).ToArray();
                 object ret = null;
                 ConstructorInfo[] allCtors = recordType.GetConstructors();
 
-                if (shortForm)
+                if ((recordEntries = form as IPersistentVector) != null)
                 {
+                    // shortForm
                     bool ctorFound = false;
-                    foreach ( ConstructorInfo cinfo in allCtors )
-                        if ( cinfo.GetParameters().Length == recordEntries.Length )
+                    foreach (ConstructorInfo cinfo in allCtors)
+                        if (cinfo.GetParameters().Length == recordEntries.count())
                             ctorFound = true;
 
-                    if ( ! ctorFound )
-                        throw new ArgumentException(String.Format("Unexpected number of constructor arguments to {0}: got {1}", recordType.ToString(), recordEntries.Length));
+                    if (!ctorFound)
+                        throw new ArgumentException(String.Format("Unexpected number of constructor arguments to {0}: got {1}", recordType.ToString(), recordEntries.count()));
 
-                    ret = Reflector.InvokeConstructor(recordType,recordEntries);
+                    ret = Reflector.InvokeConstructor(recordType, RT.toArray(recordEntries));
                 }
-                else
+                else if ((vals = form as IPersistentMap) != null)
                 {
-                    IPersistentMap vals = RT.map(recordEntries);
                     for (ISeq s = RT.keys(vals); s != null; s = s.next())
                     {
                         if (!(s.first() is Keyword))
                             throw new ArgumentException(String.Format("Unreadable defrecord form: key must be of type clojure.lang.Keyword, got {0}", s.first().ToString()));
                     }
 
-
                     ret = Reflector.InvokeStaticMethod(recordType, "create", new Object[] { vals });
+                }
+                else
+                {
+                    throw new ArgumentException("Unreadable constructor form starting with \"#" + recordName + "\"");
                 }
 
                 return ret;
             }
-
         }
 
         #endregion
@@ -1672,7 +1751,7 @@ namespace clojure.lang
 
         public sealed class UnreadableReader : ReaderBase
         {
-            protected override object Read(PushbackTextReader reader, char leftangle)
+            protected override object Read(PushbackTextReader reader, char leftangle, object opts, object pendingForms)
             {
                 throw new ArgumentException("Unreadable form");
             }
@@ -1681,6 +1760,219 @@ namespace clojure.lang
         #endregion
 
         #endregion
+
+        #region Conditional reading
+
+        static bool IsPreserveReadCond(Object opts)
+        {
+            if (RT.booleanCast(READ_COND_ENV.deref()))
+            {
+                IPersistentMap optsMap = opts as IPersistentMap;
+                if (optsMap != null)
+                {
+                    Object readCond = optsMap.valAt(OPT_READ_COND);
+                    return COND_PRESERVE.Equals(readCond);
+                }
+            }
+            return false;
+        }
+
+        public sealed class ConditionalReader : ReaderBase
+        {
+
+            protected override object Read(PushbackTextReader r, char c, object opts, object pendingForms)
+            {
+                checkConditionalAllowed(opts);
+
+                int ch = r.Read();
+                if (ch == -1)
+                    throw new EndOfStreamException("EOF while reading character");
+
+                bool splicing = false;
+
+                if (ch == '@')
+                {
+                    splicing = true;
+                    ch = r.Read();
+                }
+
+                while (isWhitespace(ch))
+                    ch = r.Read();
+
+                if (ch == -1)
+                    throw new EndOfStreamException("EOF while reading character");
+
+                if (ch != '(')
+                    throw new InvalidOperationException("read-cond body must be a list");
+
+                try
+                {
+                    Var.pushThreadBindings(RT.map(READ_COND_ENV, true /* RT.T */));
+
+                    if (IsPreserveReadCond(opts))
+                    {
+                        IFn listReader = getMacro(ch); // should always be a list
+                        Object form = listReader.invoke(r, (char)ch, opts, EnsurePending(pendingForms));
+
+                        return ReaderConditional.create(form, splicing);
+                    }
+                    else
+                    {
+                        return readCondDelimited(r, splicing, opts, pendingForms);
+                    }
+                }
+                finally
+                {
+                    Var.popThreadBindings();
+                }
+            }
+        }
+
+        internal static readonly Keyword DEFAULT_FEATURE = Keyword.intern(null, "default");
+        internal static readonly IPersistentSet RESERVED_FEATURES =
+             RT.set(Keyword.intern(null, "else"), Keyword.intern(null, "none"));
+
+
+        public static bool HasFeature(Object feature, Object opts)
+        {
+            if (!(feature is Keyword))
+                throw new InvalidOperationException("Feature should be a keyword: " + feature);
+
+            if (DEFAULT_FEATURE.Equals(feature))
+                return true;
+
+            IPersistentSet custom = (IPersistentSet)((IPersistentMap)opts).valAt(OPT_FEATURES);
+            return custom != null && custom.contains(feature);
+        }
+
+        static readonly object READ_STARTED = new object();
+
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "read")]
+        public static Object readCondDelimited(PushbackTextReader r, bool splicing, object opts, object pendingForms)
+        {
+            object result = READ_STARTED;
+            object form; // The most recently ready form
+            Boolean toplevel = (pendingForms == null);
+            pendingForms = EnsurePending(pendingForms);
+
+            LineNumberingTextReader lntr = r as LineNumberingTextReader;
+            int firstLine = lntr != null ? lntr.LineNumber : -1;
+
+            for (; ; )
+            {
+
+                if (result == READ_STARTED)
+                {
+                    // Read the next feature
+                    form = read(r, false, READ_EOF, ')', READ_FINISHED, true, opts, pendingForms);
+
+                    if (form == READ_EOF)
+                    {
+                        if (firstLine < 0)
+                            throw new EndOfStreamException("EOF while reading");
+                        else
+                            throw new EndOfStreamException("EOF while reading, starting at line " + firstLine);
+                    }
+                    else if (form == READ_FINISHED)
+                    {
+                        break; // read-cond form is done
+                    }
+
+                    if (RESERVED_FEATURES.contains(form))
+                        throw new ArgumentException("Feature name " + form + " is reserved.");
+
+                    if (HasFeature(form, opts))
+                    {
+
+                        //Read the form corresponding to the feature, and assign it to result if everything is kosher
+
+                        form = read(r, false, READ_EOF, ')', READ_FINISHED, true, opts, pendingForms);
+
+                        if (form == READ_EOF)
+                        {
+                            if (firstLine < 0)
+                                throw new EndOfStreamException("EOF while reading");
+                            else
+                                throw new EndOfStreamException("EOF while reading, starting at line " + firstLine);
+                        }
+                        else if (form == READ_FINISHED)
+                        {
+                            if (firstLine < 0)
+                                throw new ArgumentException("read-cond requires an even number of forms.");
+                            else
+                                throw new ArgumentException("read-cond starting on line " + firstLine + " requires an even number of forms");
+                        }
+                        else
+                        {
+                            result = form;
+                        }
+                    }
+                }
+
+                // When we already have a result, or when the feature didn't match, discard the next form in the reader
+                try
+                {
+                    Var.pushThreadBindings(RT.map(RT.SuppressReadVar, true /* RT.T */));
+                    form = read(r, false, READ_EOF, ')', READ_FINISHED, true, opts, pendingForms);
+
+                    if (form == READ_EOF)
+                    {
+                        if (firstLine < 0)
+                            throw new EndOfStreamException("EOF while reading");
+                        else
+                            throw new EndOfStreamException("EOF while reading, starting at line " + firstLine);
+                    }
+                    else if (form == READ_FINISHED)
+                    {
+                        break;
+                    }
+                }
+                finally
+                {
+                    Var.popThreadBindings();
+                }
+
+            }
+
+            if (result == READ_STARTED)  // no features matched
+                return r;
+
+            if (splicing)
+            {
+                IList<Object> resultAsList = result as IList<object>;
+
+                if (resultAsList == null)
+                    throw new ArgumentException("Spliced form list in read-cond-splicing must implement IList<Object>");
+
+                if (toplevel)
+                    throw new InvalidOperationException("Reader conditional splicing not allowed at the top level.");
+
+                LinkedList<Object> pendingLinked = pendingForms as LinkedList<Object>;
+                LinkedListNode<Object> node = pendingLinked.First;
+                foreach (object item in resultAsList)
+                {
+                    if (node == null)
+                        node = pendingLinked.AddFirst(item);
+                    else
+                        node = pendingLinked.AddAfter(node, item);
+                }
+                return r;
+            }
+            else
+            {
+                return result;
+            }
+        }
+
+        private static void checkConditionalAllowed(Object opts)
+        {
+            IPersistentMap mopts = (IPersistentMap)opts;
+            if (!(opts != null && (COND_ALLOW.Equals(mopts.valAt(OPT_READ_COND)) ||
+                COND_PRESERVE.Equals(mopts.valAt(OPT_READ_COND)))))
+                throw new InvalidOperationException("Conditional read not allowed");
+        }
+        #endregion
+
 
         #region ReaderException
 

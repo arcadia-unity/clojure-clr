@@ -36,7 +36,7 @@ namespace clojure.lang
     /// </remarks>
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1708:IdentifiersShouldDifferByMoreThanCase")]
     [Serializable]
-    public class PersistentHashMap: APersistentMap, IEditableCollection, IObj
+    public class PersistentHashMap : APersistentMap, IEditableCollection, IObj, IMapEnumerable, IMapEnumerableTyped<Object, Object>, IEnumerable, IEnumerable<IMapEntry>, IKVReduce
     {
         #region Data
 
@@ -275,7 +275,7 @@ namespace clojure.lang
         public override IMapEntry entryAt(object key)
         {
             if (key == null)
-                return _hasNull ? new MapEntry(null, _nullValue) : null;
+                return _hasNull ? (IMapEntry)Tuple.create(null, _nullValue) : null;
             return (_root != null)
                 ? _root.Find(0,Hash(key),key)
                 : null;
@@ -387,7 +387,7 @@ namespace clojure.lang
         public override ISeq seq()
         {
             ISeq s = _root != null ? _root.GetNodeSeq() : null;
-            return _hasNull ? new Cons(new MapEntry(null, _nullValue), s) : s;
+            return _hasNull ? new Cons(Tuple.create(null, _nullValue), s) : s;
         }
 
         /// <summary>
@@ -416,11 +416,11 @@ namespace clojure.lang
         {
             #region Data
 
-            [NonSerialized] AtomicReference<Thread> _edit;
-            INode _root;
-            int _count;
-            bool _hasNull;
-            object _nullValue;
+            [NonSerialized] readonly AtomicReference<Thread> _edit;
+            volatile INode _root;
+            volatile int _count;
+            volatile bool _hasNull;
+            volatile object _nullValue;
             readonly Box _leafFlag = new Box(null);
 
             #endregion
@@ -544,6 +544,90 @@ namespace clojure.lang
 
         #endregion
 
+        #region IMapEnumerable, IMapEnumerableTyped, IEnumerable, ... 
+
+        public delegate T KVMangleDel<T>(object k, object v);
+
+        static IEnumerator EmptyEnumerator()
+        {
+            return EmptyEnumeratorT<Object>();
+        }
+
+        static IEnumerator<T> EmptyEnumeratorT<T>()
+        {
+            yield break;
+        }
+
+        static IEnumerator NullIterator(KVMangleDel<Object> d, object nullValue, IEnumerator root)
+        {
+            yield return d(null, nullValue);
+            while (root.MoveNext())
+                yield return root.Current;
+        }
+
+        static IEnumerator<T> NullIteratorT<T>(KVMangleDel<T> d, object nullValue, IEnumerator<T> root)
+        {
+            yield return d(null, nullValue);
+            while (root.MoveNext())
+                yield return root.Current;
+        }
+
+        public IEnumerator MakeEnumerator(KVMangleDel<Object> d)
+        {
+            IEnumerator rootIter = (_root == null ? EmptyEnumerator() : _root.Iterator(d));
+            if (!_hasNull)
+                return rootIter;
+        
+            return NullIterator(d,_nullValue, rootIter);
+        }
+
+        public IEnumerator<T> MakeEnumeratorT<T>(KVMangleDel<T> d)
+        {
+            IEnumerator<T> rootIter = (_root == null ? EmptyEnumeratorT<T>() : _root.IteratorT<T>(d));
+            if (!_hasNull)
+                return rootIter;
+
+            return NullIteratorT(d, _nullValue, rootIter);
+        }
+
+        public IEnumerator keyEnumerator()
+        {
+            return MakeEnumerator((k,v) => k);
+        }
+
+        public IEnumerator valEnumerator()
+        {
+            return MakeEnumerator((k, v) => v);
+        }
+
+        public IEnumerator<object> tkeyEnumerator()
+        {
+            return MakeEnumeratorT((k, v) => k);
+        }
+
+        public IEnumerator<object> tvalEnumerator()
+        {
+            return MakeEnumeratorT((k, v) => v);
+        }
+
+        public override IEnumerator<KeyValuePair<object, object>> GetEnumerator()
+        {
+            return MakeEnumeratorT((k, v) => new KeyValuePair<Object,Object>(k,v));
+        }
+
+        IEnumerator IEnumerable.GetEnumerator()
+        {
+            return MakeEnumeratorT((k, v) => Tuple.create(k,v));
+        }
+
+        IEnumerator<IMapEntry> IEnumerable<IMapEntry>.GetEnumerator()
+        {
+            return MakeEnumeratorT((k, v) => (IMapEntry) Tuple.create(k, v));
+        }
+
+
+        #endregion
+
         #region kvreduce & fold
 
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "kvreduce")]
@@ -563,7 +647,7 @@ namespace clojure.lang
             return init;
         }
 
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "fold")]
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA1801:ReviewUnusedParameters", MessageId = "n"), System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "fold")]
         public object fold(long n, IFn combinef, IFn reducef, IFn fjinvoke, IFn fjtask, IFn fjfork, IFn fjjoin)
         {
             // JVM: we are ignoring n for now
@@ -587,7 +671,7 @@ namespace clojure.lang
         /// <summary>
         /// Interface for all nodes in the trie.
         /// </summary>
-        public interface INode
+        public interface  INode
         {
             /// <summary>
             /// Return a trie with a new key/value pair.
@@ -681,6 +765,9 @@ namespace clojure.lang
             /// <param name="fjjoin"></param>
             /// <returns></returns>
             object Fold(IFn combinef, IFn reducef, IFn fjtask, IFn fjfork, IFn fjjoin);
+
+            IEnumerator Iterator(KVMangleDel<Object> d);
+            IEnumerator<T> IteratorT<T>(KVMangleDel<T> d);
         }
 
         #endregion
@@ -756,6 +843,8 @@ namespace clojure.lang
         }
 
         #endregion
+
+        #region ArrayNode
 
         [Serializable]
         sealed class ArrayNode : INode
@@ -1029,7 +1118,43 @@ namespace clojure.lang
             }
 
             #endregion
+
+            #region iterators
+
+            public IEnumerator Iterator(KVMangleDel<Object> d)
+            {
+                foreach (INode node in _array)
+                {
+                    if (node != null)
+                    {
+                        IEnumerator ie = node.Iterator(d);
+
+                        while (ie.MoveNext())
+                            yield return ie.Current;
+                    }
+                }
+            }
+
+            public IEnumerator<T> IteratorT<T>(KVMangleDel<T> d)
+            {
+                foreach (INode node in _array)
+                {
+                    if (node != null)
+                    {
+                        IEnumerator<T> ie = node.IteratorT(d);
+
+                        while (ie.MoveNext())
+                            yield return ie.Current;
+                    }
+                }
+            }
+
+            #endregion
         }
+
+        #endregion
+
+        #region BitmapIndexNode
 
         /// <summary>
         ///  Represents an internal node in the trie, not full.
@@ -1170,7 +1295,7 @@ namespace clojure.lang
                 if ( keyOrNull == null )
                     return ((INode)valOrNode).Find(shift+5,hash,key);
                 if ( Util.equiv(key,keyOrNull))
-                    return new MapEntry(keyOrNull,valOrNode);
+                    return (IMapEntry) Tuple.create(keyOrNull,valOrNode);
                 return null;
             }
 
@@ -1349,7 +1474,25 @@ namespace clojure.lang
             }
 
             #endregion
+
+            #region iterators
+
+            public IEnumerator Iterator(KVMangleDel<Object> d)
+           { 
+                return NodeIter.GetEnumerator(_array, d);
+            }
+
+            public IEnumerator<T> IteratorT<T>(KVMangleDel<T> d)
+            {
+                return NodeIter.GetEnumeratorT(_array, d);
+            }
+
+            #endregion
         }
+
+        #endregion
+
+        #region HashCollisionNode
 
         /// <summary>
         /// Represents a leaf node corresponding to multiple map entries, all with keys that have the same hash value.
@@ -1434,7 +1577,7 @@ namespace clojure.lang
                 if (idx < 0)
                     return null;
                 if (Util.equiv(key, _array[idx]))
-                    return new MapEntry(_array[idx], _array[idx + 1]);
+                    return (IMapEntry) Tuple.create(_array[idx], _array[idx + 1]);
                 return null;
             }
 
@@ -1550,8 +1693,66 @@ namespace clojure.lang
 
             #endregion
 
+            #region iterators
+
+            public IEnumerator Iterator(KVMangleDel<Object> d)
+            {
+                return NodeIter.GetEnumerator(_array, d);
+            }
+
+            public IEnumerator<T> IteratorT<T>(KVMangleDel<T> d)
+            {
+                return NodeIter.GetEnumeratorT(_array, d);
+            }
+
+            #endregion
+
         }
 
+        #endregion
+
+        #region NodeIter
+
+        static class NodeIter
+        {
+            public static IEnumerator GetEnumerator(object[] array, KVMangleDel<Object> d)
+            {
+                for ( int i=0; i< array.Length; i+=2)
+                {
+                    object key = array[i];
+                    object nodeOrVal = array[i+1];
+                    if (key != null)
+                        yield return d(key, nodeOrVal);
+                    else if ( nodeOrVal != null )
+                    {
+                        IEnumerator ie = ((INode)nodeOrVal).Iterator(d);
+                        while (ie.MoveNext())
+                            yield return ie.Current;
+                    }
+                }
+            }
+
+            public static IEnumerator<T> GetEnumeratorT<T>(object[] array, KVMangleDel<T> d)
+            {
+                for (int i = 0; i < array.Length; i += 2)
+                {
+                    object key = array[i];
+                    object nodeOrVal = array[i + 1];
+                    if (key != null)
+                        yield return d(key, nodeOrVal);
+                    else if (nodeOrVal != null)
+                    {
+                        IEnumerator<T> ie = ((INode)nodeOrVal).IteratorT(d);
+                        while (ie.MoveNext())
+                            yield return ie.Current;
+                    }
+                }
+            }
+        }
+
+        #endregion
+
+        #region NodeSeq
 
         [Serializable]
         sealed class NodeSeq : ASeq
@@ -1567,6 +1768,7 @@ namespace clojure.lang
 
             #region Ctors
 
+            [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Performance", "CA1811:AvoidUncalledPrivateCode")]
             NodeSeq(object[] array, int i)
                 : this(null, array, i, null)
             {
@@ -1621,7 +1823,7 @@ namespace clojure.lang
             {
                 if (_s != null)
                     return _s.first();
-                return new MapEntry(_array[_i], _array[_i + 1]);
+                return Tuple.create(_array[_i], _array[_i + 1]);
             }
 
             public override ISeq next()
@@ -1654,5 +1856,7 @@ namespace clojure.lang
 
             #endregion
         }
+
+        #endregion
     }
 }

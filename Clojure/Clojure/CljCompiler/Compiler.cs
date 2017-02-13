@@ -27,12 +27,15 @@ using System.Collections;
 
 namespace clojure.lang
 {
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1724:TypeNamesShouldNotMatchNamespaces"), 
+     System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Maintainability", "CA1506:AvoidExcessiveClassCoupling")]
     public static class Compiler
     {
         #region other constants
 
         internal const int MaxPositionalArity = 20;
-        internal const string CompileStubPrefix = "compile__stub";
+        //internal const string CompileStubPrefix = "compile__stub";
+        internal const string DeftypeBaseClassNamePrefix = "DeftypeBase";
 
         #endregion
 
@@ -63,7 +66,9 @@ namespace clojure.lang
         public static readonly Symbol LetSym = Symbol.intern("let*");
         public static readonly Symbol LetfnSym = Symbol.intern("letfn*");
         public static readonly Symbol DoSym = Symbol.intern("do");
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "Fn")]
         public static readonly Symbol FnSym = Symbol.intern("fn*");
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "Fn")]
         public static readonly Symbol FnOnceSym = (Symbol) Symbol.intern("fn*").withMeta(RT.map(Keyword.intern(null, "once"), true));
         public static readonly Symbol QuoteSym = Symbol.intern("quote");
         public static readonly Symbol TheVarSym = Symbol.intern("var");
@@ -98,6 +103,7 @@ namespace clojure.lang
 
         #region Keywords
 
+        internal static readonly Keyword LoadNsKeyword = Keyword.intern(null, "load-ns");
         static readonly Keyword InlineKeyword = Keyword.intern(null, "inline");
         static readonly Keyword InlineAritiesKeyword = Keyword.intern(null, "inline-arities");
         //internal static readonly Keyword StaticKeyword = Keyword.intern(null, "static");
@@ -108,11 +114,13 @@ namespace clojure.lang
         internal static readonly Keyword ProtocolKeyword = Keyword.intern(null,"protocol");
         //static readonly Keyword OnKeyword = Keyword.intern(null, "on");
         internal static readonly Keyword DynamicKeyword = Keyword.intern("dynamic");
+        internal static readonly Keyword RedefKeyword = Keyword.intern("redef");
 
 
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Performance", "CA1823:AvoidUnusedPrivateFields")]
         internal static readonly Keyword DisableLocalsClearingKeyword = Keyword.intern("disable-locals-clearing");
 
+        internal static readonly Keyword DirectLinkingKeyword = Keyword.intern("direct-linking");
         internal static readonly Keyword ElideMetaKeyword = Keyword.intern("elide-meta");
  
 
@@ -121,6 +129,9 @@ namespace clojure.lang
         #region Vars
 
         //boolean
+        internal static readonly Var DebugVar = Var.intern(Namespace.findOrCreate(Symbol.intern("clojure.core")),
+                                                         Symbol.intern("*debug*"), false).setDynamic();  
+        
         internal static readonly Var CompileFilesVar = Var.intern(Namespace.findOrCreate(Symbol.intern("clojure.core")),
                                                          Symbol.intern("*compile-files*"), false).setDynamic();  
 
@@ -170,7 +181,7 @@ namespace clojure.lang
         // Label
         internal static readonly Var LoopLabelVar = Var.create().setDynamic();
 
-
+        internal static readonly Var InTryBlockVar = Var.create(null).setDynamic();          //null or not
         internal static readonly Var InCatchFinallyVar = Var.create(null).setDynamic();          //null or not
 
         internal static readonly Var NoRecurVar = Var.create(null).setDynamic();
@@ -187,10 +198,12 @@ namespace clojure.lang
         internal static readonly Var CompileStubSymVar = Var.create(null).setDynamic();
         internal static readonly Var CompileStubClassVar = Var.create(null).setDynamic();
         internal static readonly Var CompileStubOrigClassVar = Var.create(null).setDynamic();
+        internal static readonly Var CompilingDefTypeVar = Var.create(null).setDynamic();
 
         internal static readonly Var CompilerContextVar = Var.create(null).setDynamic();
         internal static readonly Var CompilerActiveVar = Var.create(false).setDynamic();
-
+        
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA2211:NonConstantFieldsShouldNotBeVisible")]  
         public static Var CompilerOptionsVar;
 
         public static object GetCompilerOption(Keyword k)
@@ -202,14 +215,28 @@ namespace clojure.lang
         {
             Object compilerOptions = null;
 
-            foreach (DictionaryEntry de in Environment.GetEnvironmentVariables())
+			string nixPrefix = "CLOJURE_COMPILER_";
+			string winPrefix = "clojure.compiler.";
+
+            IDictionary envVars = Environment.GetEnvironmentVariables();
+            foreach (DictionaryEntry de in envVars)
             {
                 string name = (string)de.Key;
                 string v = (string)de.Value;
-                if (name.StartsWith("CLOJURE_COMPILER_"))
+				if (name.StartsWith(nixPrefix))
+                {
+					// compiler options on *nix need to be of the form
+					// CLOJURE_COMPILER_DIRECT_LINKING because most shells do not
+					// support hyphens in variable names
+					string optionName = name.Substring(1 + nixPrefix.Length).Replace("_", "-").ToLower();
+                    compilerOptions = RT.assoc(compilerOptions,
+                        RT.keyword(null, optionName),
+                        RT.readString(v));
+                }
+				if ( name.StartsWith(winPrefix))
                 {
                     compilerOptions = RT.assoc(compilerOptions,
-                        RT.keyword(null, name.Substring(1 + name.LastIndexOf("_"))),
+                        RT.keyword(null, name.Substring(1 + winPrefix.Length)),
                         RT.readString(v));
                 }
 
@@ -276,6 +303,8 @@ namespace clojure.lang
 
         #region MethodInfos, etc.
 
+        internal static readonly MethodInfo Method_ArraySeq_create = typeof(ArraySeq).GetMethod("create", new Type[] { typeof(Object[]) });
+
         internal static readonly PropertyInfo Method_Compiler_CurrentNamespace = typeof(Compiler).GetProperty("CurrentNamespace");
         internal static readonly MethodInfo Method_Compiler_PushNS = typeof(Compiler).GetMethod("PushNS");
 
@@ -310,7 +339,7 @@ namespace clojure.lang
         internal static readonly MethodInfo Method_RT_seqOrElse = typeof(RT).GetMethod("seqOrElse");
         internal static readonly MethodInfo Method_RT_set = typeof(RT).GetMethod("set");
         internal static readonly MethodInfo Method_RT_vector = typeof(RT).GetMethod("vector");
-        internal static readonly MethodInfo Method_RT_readString = typeof(RT).GetMethod("readString");
+        internal static readonly MethodInfo Method_RT_readString = typeof(RT).GetMethod("readString", new Type[]{ typeof(String) });
         internal static readonly MethodInfo Method_RT_var2 = typeof(RT).GetMethod("var", new Type[] { typeof(string), typeof(string) });
 
         internal static readonly MethodInfo Method_Symbol_intern2 = typeof(Symbol).GetMethod("intern", new Type[] { typeof(string), typeof(string) });
@@ -338,6 +367,15 @@ namespace clojure.lang
         internal static readonly ConstructorInfo Ctor_Serializable = typeof(SerializableAttribute).GetConstructor(Type.EmptyTypes);
 
         internal static readonly MethodInfo[] Methods_IFn_invoke = new MethodInfo[MaxPositionalArity + 2];
+        internal static readonly MethodInfo[] Methods_CreateTuple = new MethodInfo[] { 
+            typeof(Tuple).GetMethod("create",CreateObjectTypeArray(0)),
+            typeof(Tuple).GetMethod("create",CreateObjectTypeArray(1)),
+            typeof(Tuple).GetMethod("create",CreateObjectTypeArray(2)),
+            typeof(Tuple).GetMethod("create",CreateObjectTypeArray(3)),
+            typeof(Tuple).GetMethod("create",CreateObjectTypeArray(4)),
+            typeof(Tuple).GetMethod("create",CreateObjectTypeArray(5)),
+            typeof(Tuple).GetMethod("create",CreateObjectTypeArray(6)),
+        };
 
         internal static Type[] CreateObjectTypeArray(int size)
         {
@@ -351,7 +389,7 @@ namespace clojure.lang
 
         #region C-tors & factory methods
 
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Performance", "CA1810:InitializeReferenceTypeStaticFieldsInline")]
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Maintainability", "CA1506:AvoidExcessiveClassCoupling"), System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Performance", "CA1810:InitializeReferenceTypeStaticFieldsInline")]
         static Compiler()
         {
             for (int i = 0; i <= Compiler.MaxPositionalArity; i++)
@@ -382,7 +420,8 @@ namespace clojure.lang
             if (sym.Namespace != null)
             {
                 Namespace ns = namespaceFor(sym);
-                if (ns == null || ns.Name.Name == sym.Namespace)
+                if (ns == null || (ns.Name.Name == null ? sym.Namespace == null : ns.Name.Name.Equals(sym.Namespace)))
+
                     return sym;
                 return Symbol.intern(ns.Name.Name, sym.Name);
             }
@@ -428,14 +467,6 @@ namespace clojure.lang
         public static Namespace CurrentNamespace
         {
             get { return (Namespace)RT.CurrentNSVar.deref(); }
-        }
-
-        public static string DestubClassName(String className)
-        {
-            //skip over prefix + '.' or '/'
-            if (className.StartsWith(CompileStubPrefix))
-                return className.Substring(CompileStubPrefix.Length + 1);
-            return className;
         }
 
         public static object Resolve(Symbol symbol, bool allowPrivate)
@@ -647,29 +678,28 @@ namespace clojure.lang
 
          internal static LocalBinding RegisterLocalThis(Symbol sym, Symbol tag, Expr init)
          {
-             return RegisterLocalInternal(sym, tag, init, true, false, false);
+             return RegisterLocalInternal(sym, tag, init, typeof(Object),  true, false, false);
          }
 
-        internal static LocalBinding RegisterLocal(Symbol sym, Symbol tag, Expr init, bool isArg)
+         internal static LocalBinding RegisterLocal(Symbol sym, Symbol tag, Expr init, Type declaredType, bool isArg)
         {
-             return RegisterLocalInternal(sym, tag, init, false, isArg, false);
-        }
- 
-
-        internal static LocalBinding RegisterLocal(Symbol sym, Symbol tag, Expr init, bool isArg, bool isByRef)
-        {
-            return RegisterLocalInternal(sym,tag,init,false,isArg,isByRef);
+             return RegisterLocalInternal(sym, tag, init, declaredType, false, isArg, false);
         }
 
-        private static LocalBinding RegisterLocalInternal(Symbol sym, Symbol tag, Expr init, bool isThis, bool isArg, bool isByRef)
+
+        internal static LocalBinding RegisterLocal(Symbol sym, Symbol tag, Expr init, Type declaredType, bool isArg, bool isByRef)
+        {
+            return RegisterLocalInternal(sym, tag, init, declaredType, false, isArg, isByRef);
+        }
+
+        private static LocalBinding RegisterLocalInternal(Symbol sym, Symbol tag, Expr init, Type declaredType, bool isThis, bool isArg, bool isByRef)
         {
             int num = GetAndIncLocalNum();
-            LocalBinding b = new LocalBinding(num, sym, tag, init, isThis, isArg, isByRef);
+            LocalBinding b = new LocalBinding(num, sym, tag, init, declaredType, isThis, isArg, isByRef);
             IPersistentMap localsMap = (IPersistentMap)LocalEnvVar.deref();
             LocalEnvVar.set(RT.assoc(localsMap, b.Symbol, b));
             ObjMethod method = (ObjMethod)MethodVar.deref();
-            method.Locals = (IPersistentMap)RT.assoc(method.Locals, b, b);
-            method.IndexLocals = (IPersistentMap)RT.assoc(method.IndexLocals, num, b);
+            method.AddLocal(num, b);
             return b;
         }
 
@@ -692,6 +722,8 @@ namespace clojure.lang
             if (b != null)
             {
                 ObjMethod method = (ObjMethod)MethodVar.deref();
+                if (b.Index == 0)
+                    method.UsesThis = true;
                 CloseOver(b, method);
             }
 
@@ -702,14 +734,20 @@ namespace clojure.lang
         {
             if (b != null && method != null)
             {
-                if (RT.get(method.Locals, b) == null)
+                LocalBinding lb = (LocalBinding)RT.get(method.Locals, b);
+                if (lb == null)
                 {
                     method.Objx.Closes = (IPersistentMap)RT.assoc(method.Objx.Closes, b, b);
                     CloseOver(b, method.Parent);
                 }
-                else if (InCatchFinallyVar.deref() != null)
+                else
                 {
-                    method.LocalsUsedInCatchFinally = (PersistentHashSet)method.LocalsUsedInCatchFinally.cons(b.Index);
+                    if (lb.Index == 0)
+                        method.UsesThis = true;
+                    if (InCatchFinallyVar.deref() != null)
+                    {
+                        method.LocalsUsedInCatchFinally = (PersistentHashSet)method.LocalsUsedInCatchFinally.cons(b.Index);
+                    }
                 }
             }
         }
@@ -755,6 +793,33 @@ namespace clojure.lang
                 return null;
             }
             return match;
+        }
+
+        public static bool Inty(Type t)
+        {
+            return t == typeof(int)
+                || t == typeof(uint)
+                || t == typeof(short)
+                || t == typeof(ushort)
+                || t == typeof(byte)
+                || t == typeof(sbyte)
+                || t == typeof(char)
+                || t == typeof(ulong);  // not sure abou this one.
+        }
+
+        public static Type RetType(Type tc, Type ret)
+        {
+            if (tc == null)
+                return ret;
+            if (ret == null)
+                return tc;
+            if (ret.IsPrimitive && tc.IsPrimitive)
+            {
+                if ((Inty(ret) && Inty(tc)) || (ret == tc))
+                    return tc;
+                throw new InvalidOperationException(String.Format("Cannot coerce {0} to {1}, use a cast instead", ret, tc));
+            }
+            return tc;
         }
 
         public static Type PrimType(Symbol sym)
@@ -1080,14 +1145,6 @@ namespace clojure.lang
                     // hide the 2 extra params for a macro
                     throw new ArityException(e.Actual - 2, e.Name);
                 }
-                    catch (CompilerException)
-                {
-                    throw;
-                }
-                catch (Exception e)
-                {
-                    throw new CompilerException((String)SourcePathVar.deref(), LineVarDeref(), ColumnVarDeref(), e);
-                }
             }
             else
             {
@@ -1339,11 +1396,11 @@ namespace clojure.lang
         }
 
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA1801:ReviewUnusedParameters", MessageId = "name")]
         static GenContext CreateEvalContext(string name, bool createDynInitHelper)
         {
             GenContext c = GenContext.CreateWithInternalAssembly("eval", createDynInitHelper);
-            //TypeBuilder tb = c.AssemblyGen.DefinePublicType("__Scratch__", typeof(object), false);
-            //return c.WithTypeBuilder(tb);
+            //GenContext c = GenContext.CreateWithExternalAssembly("eval", ".dll", true);  // for debugging use with SaveEvalContext
             return c;
         }
 
@@ -1362,6 +1419,11 @@ namespace clojure.lang
             get { return RT.booleanCast(CompilerActiveVar.deref()); }
         }
 
+        public static bool IsCompilingDefType
+        {
+            get { return RT.booleanCast(CompilingDefTypeVar.deref()); }
+        }
+
         public static string IsCompilingSuffix()
         {
             GenContext context = (GenContext)CompilerContextVar.deref();
@@ -1370,7 +1432,8 @@ namespace clojure.lang
 
         internal static string InitClassName(string sourcePath)
         {
-            return "__Init__$" + sourcePath.Replace(".", "/");
+			// munge slashes to $ to avoid mono lookup bug -nasser
+			return "__Init__$" + sourcePath.Replace(".", "/").Replace("/", "$");
         }
         
         public static void PushNS()
@@ -1395,6 +1458,7 @@ namespace clojure.lang
             return null;
         }
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA1801:ReviewUnusedParameters", MessageId = "sourceDirectory")]
         public static object Compile(GenContext context,TextReader rdr, string sourceDirectory, string sourceName, string relativePath)
         {
             object eofVal = new object();
@@ -1438,7 +1502,9 @@ namespace clojure.lang
 
             try
             {
-                while ((form = LispReader.read(lntr, false, eofVal, false)) != eofVal)
+                Object readerOpts = ReaderOpts(sourceName);
+
+                while ((form = LispReader.read(lntr, false, eofVal, false, readerOpts)) != eofVal)
                 {
                     Compile1(initTB, ilg, objx, form);
                 }
@@ -1529,6 +1595,7 @@ namespace clojure.lang
         
         #region Loading
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Reliability", "CA2001:AvoidCallingProblematicMethods", MessageId = "System.Reflection.Assembly.LoadFrom")]
         internal static void LoadAssembly(FileInfo assyInfo, string relativePath)
         {
             Assembly assy;
@@ -1579,20 +1646,7 @@ namespace clojure.lang
 
         private static Type GetTypeFromAssy(Assembly assy, string typeName)
         {
-            if (RT.IsRunningOnMono)
-            {
-                // I have no idea why Mono can't find our initializer types using Assembly.GetType(string).
-                // This is roll-your-own.
-                Type[] types = assy.GetExportedTypes();
-                foreach (Type t in types)
-                {
-                    if (t.Name.Equals(typeName))
-                        return t;
-                }
-                return null;
-            }
-            else
-                return assy.GetType(typeName);
+            return assy.GetType(typeName);
         }
 
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Design", "CA1031:DoNotCatchGeneralExceptionTypes")]
@@ -1647,7 +1701,8 @@ namespace clojure.lang
 
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "load")]
         public static object loadFile(string fileName)
-        {            FileInfo finfo = new FileInfo(fileName);
+        {
+            FileInfo finfo = new FileInfo(fileName);
             if (!finfo.Exists)
                 throw new FileNotFoundException("Cannot find file to load", fileName);
 
@@ -1669,8 +1724,26 @@ namespace clojure.lang
 
         public delegate object ReplDelegate();
 
+        static void ConsumeWhitespaces(LineNumberingTextReader lnReader)
+        {
+            int ch = lnReader.Read();
+            while (LispReader.isWhitespace(ch))
+                ch = lnReader.Read();
+            LispReader.Unread(lnReader, ch);
+        }
 
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "load")]
+        static readonly Object OPTS_COND_ALLOWED = RT.mapUniqueKeys(LispReader.OPT_READ_COND, LispReader.COND_ALLOW);
+
+        static Object ReaderOpts(string sourceName)
+        {
+            if (sourceName != null && sourceName.EndsWith(".cljc"))
+                return OPTS_COND_ALLOWED;
+            else
+                return null;
+        }
+
+
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA1801:ReviewUnusedParameters", MessageId = "relativePath"), System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "load")]
         public static object load(TextReader rdr, string sourcePath, string sourceName, string relativePath)
         {
             object ret = null;
@@ -1678,7 +1751,9 @@ namespace clojure.lang
             object form;
 
             LineNumberingTextReader lntr = rdr as LineNumberingTextReader ?? new LineNumberingTextReader(rdr);
- 
+
+            ConsumeWhitespaces(lntr);
+
             Var.pushThreadBindings(RT.mapUniqueKeys(
                 //LOADER, RT.makeClassLoader(),
                 SourcePathVar, sourcePath,
@@ -1695,14 +1770,17 @@ namespace clojure.lang
                 //COLUMN_AFTER, lntr.ColumnNumber
                 ));
 
+            Object readerOpts = ReaderOpts(sourceName);
+
             int lineBefore = lntr.LineNumber;
             int columnBefore = lntr.ColumnNumber;
             //int lineAfter = lntr.LineNumber;
             //int columnAfter = lntr.ColumnNumber;
             try
             {
-                while ((form = LispReader.read(lntr, false, eofVal, false)) != eofVal)
+                while ((form = LispReader.read(lntr, false, eofVal, false, readerOpts)) != eofVal)
                 {
+                    ConsumeWhitespaces(lntr);
                     //LINE_AFTER.set(lntr.LineNumber);
                     //COLUMN_AFTER.set(lntr.ColumnNumber);
                     //lineAfter = lntr.LineNumber;
@@ -1754,9 +1832,11 @@ namespace clojure.lang
             {
                 if (form is LazySeq)
                 {
+                    object mform = form;
                     form = RT.seq(form);
                     if (form == null)
                         form = PersistentList.EMPTY;
+                    form = ((IObj)form).withMeta(RT.meta(mform));
                 }
                 if (form == null)
                     return NilExprInstance;
@@ -1773,7 +1853,10 @@ namespace clojure.lang
                     return NumberExpr.Parse(form);
                 else if (type == typeof(String))
                     return new StringExpr(String.Intern((String)form));
-                else if (form is IPersistentCollection && ((IPersistentCollection)form).count() == 0)
+                else if (form is IPersistentCollection
+                    && ! (form is IRecord)
+                    && ! (form is IType)
+                    && ((IPersistentCollection)form).count() == 0)
                     return OptionallyGenerateMetaInit(pcontext, form, new EmptyExpr(form));
                 else if (form is ISeq)
                     return AnalyzeSeq(pcontext, (ISeq)form, name);
@@ -1914,6 +1997,11 @@ namespace clojure.lang
             }
         }
 
+        internal static bool InTailCall(RHC context)
+        {
+            return (context == RHC.Return) && (InTryBlockVar.deref() == null);
+        }
+
 
         #endregion
 
@@ -1924,8 +2012,8 @@ namespace clojure.lang
         {
             #region Data
             
-            string FileSource { get; set; }
-            int Line { get; set; }
+            public string FileSource { get; private set; }
+            public int Line { get; private set; }
             
             #endregion
 

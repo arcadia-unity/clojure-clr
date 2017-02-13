@@ -26,74 +26,90 @@ namespace clojure.lang.CljCompiler.Ast
 {
     public class ObjExpr : Expr
     {
+        public ParserContext ParsedContext { get; set; }
+        
         #region Data
 
-        const string ConstPrefix = "const__";
-        const string StaticCtorHelperName = "__static_ctor_helper";
+        public const string ConstPrefix = "const__";
+        public const string StaticCtorHelperName = "__static_ctor_helper";
 
-        public string InternalName { get; set; }
-        protected string _name;
-        public string Name { get { return _name; } }
+        public string InternalName { get; internal set; }
+        public string Name { get; protected set; }
+        public string ThisName { get; protected set; }
+
         protected readonly object _tag;
+        public object Tag { get { return _tag; } }
 
-        public IPersistentMap Closes { get; set; }
-        public IPersistentMap Keywords { get; set; }
-        public IPersistentMap Vars { get; set; }
-        public IPersistentVector Constants { get; set; }
+        public Object Src { get; protected set; }
+        public IPersistentMap Opts { get; protected set; }
 
-        Dictionary<int, FieldBuilder> ConstantFields { get; set;} 
-        protected IPersistentMap Fields { get; set; }            // symbol -> lb
 
-        protected IPersistentMap SpanMap { get; set; }
+        // If we were to get rid of setting these in Compiler.Compile1, we could change to protected.
+        // Perhaps part of passing context instead of using dynamic vars.
+        public IPersistentMap Closes { get; internal set; }
+        public IPersistentMap Keywords { get; internal set; }
+        public IPersistentMap Vars { get; internal set; }
+        public IPersistentVector Constants { get; internal set; }
 
-        protected Type _compiledType;
-        protected Type CompiledType
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA2227:CollectionPropertiesShouldBeReadOnly")]
+        public Dictionary<int, FieldBuilder> ConstantFields { get; protected set; } 
+        public IPersistentMap Fields { get; protected set; }            // symbol -> lb
+        public IPersistentMap SpanMap { get; protected set; }
+        public Type CompiledType { get; protected set; }
+        public IPersistentMap ClassMeta { get; protected set; }
+        public TypeBuilder TypeBuilder { get; protected set; }
+        public ConstructorInfo CtorInfo { get; protected set; }
+        public ConstructorInfo BaseClassClosedOverCtor { get; protected set; }  // needed by NewInstanceExpr
+        public ConstructorInfo BaseClassAltCtor { get; protected set; }          // needed by NewInstanceExpr
+        public Type BaseClass { get; protected set; }                           // needed by NewInstanceExpr
+        public IPersistentVector KeywordCallsites { get; protected set; }
+        public IPersistentVector ProtocolCallsites { get; protected set; }
+        public IPersistentSet VarCallsites { get; protected set; }
+
+
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA2227:CollectionPropertiesShouldBeReadOnly")]
+        public IList<FieldBuilder> KeywordLookupSiteFields { get; protected set; }
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA2227:CollectionPropertiesShouldBeReadOnly")]
+        public IList<FieldBuilder> ThunkFields { get; protected set; }
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA2227:CollectionPropertiesShouldBeReadOnly")]
+        public IList<FieldBuilder> CachedTypeFields { get; protected set; }
+
+
+        internal FieldBuilder KeywordLookupSiteField(int i)
         {
-            get
-            {
-                if (_compiledType == null)
-                    // can't do much
-                    // Java will get the loader and define the clas from the stored bytecodes
-                    // Not sure what the equivalent would be.
-                    throw new InvalidOperationException("ObjExpr type not compiled");
-                return _compiledType;
-            }
-            set { _compiledType = value; }
+            return KeywordLookupSiteFields[i];
         }
 
-        protected IPersistentMap _classMeta;
+        internal FieldBuilder CachedTypeField(int i)
+        {
+            return CachedTypeFields[i];
+        }
 
-        protected TypeBuilder _typeBuilder;
-        public TypeBuilder TypeBlder { get { return _typeBuilder; } }
-
-        protected ConstructorInfo _ctorInfo;
-
-        public IPersistentVector KeywordCallsites { get; set; }
-        List<FieldBuilder> _keywordLookupSiteFields;
-        List<FieldBuilder> _thunkFields;
-
-        public IPersistentVector ProtocolCallsites { get; set; }
-        List<FieldBuilder> _cachedTypeFields;
+        internal FieldBuilder ThunkField(int i)
+        {
+            return ThunkFields[i];
+        }
 
 
-        FieldBuilder _metaField;
-        List<FieldBuilder> _closedOverFields;
-        Dictionary<LocalBinding, FieldBuilder> _closedOverFieldsMap;
-        Dictionary<FieldBuilder, LocalBinding> _closedOverFieldsToBindingsMap;
+        public FieldBuilder MetaField { get; protected set; }
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA2227:CollectionPropertiesShouldBeReadOnly")]
+        public IList<FieldBuilder> ClosedOverFields { get; protected set; }
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA2227:CollectionPropertiesShouldBeReadOnly")]
+        public Dictionary<LocalBinding, FieldBuilder> ClosedOverFieldsMap { get; protected set; }
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA2227:CollectionPropertiesShouldBeReadOnly")]
+        public Dictionary<FieldBuilder, LocalBinding> ClosedOverFieldsToBindingsMap { get; protected set; }
+        public IPersistentVector HintedFields { get; protected set; }
 
-        protected int _altCtorDrops;
+        public int AltCtorDrops { get; protected set; }
 
-        protected IPersistentCollection _methods;
+        public IPersistentCollection Methods { get; protected set; }
 
-        protected int _constantsID;
-        protected bool _onceOnly;
-        protected Object _src;
-        protected bool _isStatic;
-        public bool IsStatic { get { return _isStatic; } }
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "ID")]
+        public int ConstantsID { get; protected set; }
+        public bool OnceOnly { get; protected set; }
+        public bool CanBeDirect { get; protected set; }
 
-
- 
-
+        
         protected bool IsDefType { get { return Fields != null; } }
         protected virtual bool SupportsMeta { get { return !IsDefType; } }
 
@@ -166,42 +182,8 @@ namespace clojure.lang.CljCompiler.Ast
             return typeof(object);
         }
 
-        internal FieldBuilder KeywordLookupSiteField(int i)
-        {
-            return _keywordLookupSiteFields[i];
-        }
 
-        internal FieldBuilder CachedTypeField(int i)
-        {
-            return _cachedTypeFields[i];
-        }
-
-        internal FieldBuilder ThunkField(int i)
-        {
-            return _thunkFields[i];
-        }
-
-        protected string _thisName;
-        protected IPersistentVector _hintedFields = PersistentVector.EMPTY; // hinted fields
-
-        private IPersistentSet _varCallsites;
         
-        #endregion
-
-        #region Data accessors
-
-        public string ThisName
-        {
-            get { return _thisName; }
-            //set { _thisName = value; }
-        }
-
-        internal IPersistentSet VarCallsites
-        {
-            get { return _varCallsites; }
-            set { _varCallsites = value; }
-        }
-
         #endregion
 
         #region C-tors
@@ -212,6 +194,8 @@ namespace clojure.lang.CljCompiler.Ast
             Keywords = PersistentHashMap.EMPTY;
             Vars = PersistentHashMap.EMPTY;
             Closes = PersistentHashMap.EMPTY;
+            HintedFields = PersistentVector.EMPTY;
+            Opts = PersistentHashMap.EMPTY;
         }
 
         #endregion
@@ -225,7 +209,7 @@ namespace clojure.lang.CljCompiler.Ast
 
         public virtual Type ClrType
         {
-            get { return _compiledType ?? (_tag != null ? HostExpr.TagToType(_tag) : typeof(IFn)); }
+            get { return CompiledType ?? (_tag != null ? HostExpr.TagToType(_tag) : typeof(IFn)); }
         }
 
         #endregion
@@ -275,6 +259,8 @@ namespace clojure.lang.CljCompiler.Ast
 
         #region Code generation 
 
+        #region Emitting a Fn
+
         public virtual void Emit(RHC rhc, ObjExpr objx, CljILGen ilg)
         {
             //emitting a Fn means constructing an instance, feeding closed-overs from enclosing scope, if any
@@ -299,24 +285,27 @@ namespace clojure.lang.CljCompiler.Ast
                         objx.EmitLocal(ilg, lb);
                 }
 
-                ilg.Emit(OpCodes.Newobj, _ctorInfo);
+                ilg.Emit(OpCodes.Newobj, CtorInfo);
             }
 
             if (rhc == RHC.Statement)
                 ilg.Emit(OpCodes.Pop);
         }
 
+        #endregion
+
+        #region Fn class construction
+
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA1801:ReviewUnusedParameters", MessageId = "onetimeUse")]
         public Type Compile(Type superType, Type stubType, IPersistentVector interfaces, bool onetimeUse, GenContext context)
         {
-            if (_compiledType != null)
-                return _compiledType;
+            if (CompiledType != null)
+                return CompiledType;
 
-            string publicTypeName = IsDefType || (_isStatic && Compiler.IsCompiling) ? InternalName : InternalName + "__" + RT.nextID();
+            string publicTypeName = IsDefType /* || (CanBeDirect && Compiler.IsCompiling) */ ? InternalName : InternalName + "__" + RT.nextID();
 
-            //Console.WriteLine("DefFn {0}, {1}", publicTypeName, context.AssemblyBuilder.GetName().Name);
-
-            _typeBuilder = context.AssemblyGen.DefinePublicType(publicTypeName, superType, true);
-            context = context.WithNewDynInitHelper().WithTypeBuilder(_typeBuilder);
+            TypeBuilder = context.AssemblyGen.DefinePublicType(publicTypeName, superType, true);
+            context = context.WithNewDynInitHelper().WithTypeBuilder(TypeBuilder);
 
             Var.pushThreadBindings(RT.map(Compiler.CompilerContextVar, context));
 
@@ -325,76 +314,60 @@ namespace clojure.lang.CljCompiler.Ast
                 if (interfaces != null)
                 {
                     for (int i = 0; i < interfaces.count(); i++)
-                        _typeBuilder.AddInterfaceImplementation((Type)interfaces.nth(i));
+                        TypeBuilder.AddInterfaceImplementation((Type)interfaces.nth(i));
                 }
 
-                ObjExpr.MarkAsSerializable(_typeBuilder);
-                GenInterface.SetCustomAttributes(_typeBuilder, _classMeta);
+                ObjExpr.MarkAsSerializable(TypeBuilder);
+                GenInterface.SetCustomAttributes(TypeBuilder, ClassMeta);
 
                 try
                 {
                     if (IsDefType)
                     {
-                        Compiler.RegisterDuplicateType(_typeBuilder);
+                        Compiler.RegisterDuplicateType(TypeBuilder);
 
                         Var.pushThreadBindings(RT.map(
-                            Compiler.CompileStubOrigClassVar, stubType
+                            Compiler.CompileStubOrigClassVar, stubType,
+                            Compiler.CompilingDefTypeVar, true
                             ));
                         //,
                         //Compiler.COMPILE_STUB_CLASS, _baseType));
                     }
-                    EmitConstantFieldDefs(_typeBuilder);
-                    EmitKeywordCallsiteDefs(_typeBuilder);
+                    EmitConstantFieldDefs(TypeBuilder);
+                    EmitKeywordCallsiteDefs(TypeBuilder);
 
-                    DefineStaticConstructor(_typeBuilder);
+                    DefineStaticConstructor(TypeBuilder);
 
                     if (SupportsMeta)
-                        _metaField = _typeBuilder.DefineField("__meta", typeof(IPersistentMap), FieldAttributes.Public | FieldAttributes.InitOnly);
+                        MetaField = TypeBuilder.DefineField("__meta", typeof(IPersistentMap), FieldAttributes.Public | FieldAttributes.InitOnly);
 
                     // If this IsDefType, then it has already emitted the closed-over fields on the base class.
                     if ( ! IsDefType )
-                        EmitClosedOverFields(_typeBuilder);
-                    EmitProtocolCallsites(_typeBuilder);
+                        EmitClosedOverFields(TypeBuilder);
+                    EmitProtocolCallsites(TypeBuilder);
 
-                    _ctorInfo = EmitConstructor(_typeBuilder, superType);
+                    CtorInfo = EmitConstructor(TypeBuilder, superType);
 
-                    if (_altCtorDrops > 0)
-                        EmitFieldOnlyConstructor(_typeBuilder, superType);
+                    if (AltCtorDrops > 0)
+                        EmitFieldOnlyConstructor(TypeBuilder, superType);
 
                     if (SupportsMeta)
                     {
-                        EmitNonMetaConstructor(_typeBuilder, superType);
-                        EmitMetaFunctions(_typeBuilder);
+                        EmitNonMetaConstructor(TypeBuilder, superType);
+                        EmitMetaFunctions(TypeBuilder);
                     }
 
-                    EmitStatics(_typeBuilder);
-                    EmitMethods(_typeBuilder);
+                    EmitStatics(TypeBuilder);
+                    EmitMethods(TypeBuilder);
 
-                    //if (KeywordCallsites.count() > 0)
-                    //    EmitSwapThunk(_typeBuilder);
-
-                    _compiledType = _typeBuilder.CreateType();
+                    CompiledType = TypeBuilder.CreateType();
 
                     if (context.DynInitHelper != null)
                         context.DynInitHelper.FinalizeType();
 
-                    //  If we don't pick up the ctor after we finalize the type, 
-                    //    we sometimes get a ctor which is not a RuntimeConstructorInfo
-                    //  This causes System.DynamicILGenerator.Emit(opcode,ContructorInfo) to blow up.
-                    //    The error says the ConstructorInfo is null, but there is a second case in the code.
-                    //  Thank heavens one can run Reflector on mscorlib.
+                    CtorInfo = GetConstructorWithArgCount(CompiledType, CtorTypes().Length);
 
-                    ConstructorInfo[] cis = _compiledType.GetConstructors();
-                    foreach (ConstructorInfo ci in cis)
-                    {
-                        if (ci.GetParameters().Length == CtorTypes().Length)
-                        {
-                            _ctorInfo = ci;
-                            break;
-                        }
-                    }
-
-                    return _compiledType;
+                    return CompiledType;
                 }
                 finally
                 {
@@ -412,8 +385,8 @@ namespace clojure.lang.CljCompiler.Ast
         {
             int count = KeywordCallsites.count();
 
-            _keywordLookupSiteFields = new List<FieldBuilder>(count);
-            _thunkFields = new List<FieldBuilder>(count);
+            KeywordLookupSiteFields = new List<FieldBuilder>(count);
+            ThunkFields = new List<FieldBuilder>(count);
 
             for (int i = 0; i < KeywordCallsites.count(); i++)
             {
@@ -422,29 +395,51 @@ namespace clojure.lang.CljCompiler.Ast
                 string thunkName = ThunkNameStatic(i);
                 FieldBuilder fb1 = baseTB.DefineField(siteName, typeof(KeywordLookupSite), FieldAttributes.FamORAssem | FieldAttributes.Static);
                 FieldBuilder fb2 = baseTB.DefineField(thunkName, typeof(ILookupThunk), FieldAttributes.FamORAssem | FieldAttributes.Static);
-                _keywordLookupSiteFields.Add(fb1);
-                _thunkFields.Add(fb2);
+                KeywordLookupSiteFields.Add(fb1);
+                ThunkFields.Add(fb2);
             }
         }
 
-        private void DefineStaticConstructor(TypeBuilder fnTB)
+        protected virtual void DefineStaticConstructor(TypeBuilder fnTB)
         {
             ConstructorBuilder cb = fnTB.DefineConstructor(MethodAttributes.Static, CallingConventions.Standard, Type.EmptyTypes);
             EmitStaticConstructorBody(new CljILGen(cb.GetILGenerator()));
 
         }
-
-        private void EmitStaticConstructorBody(CljILGen ilg)
+        
+        protected void EmitStaticConstructorBody(CljILGen ilg)
         {
             GenContext.EmitDebugInfo(ilg, SpanMap);
-
+            
             if (Constants.count() > 0)
                 EmitConstantFieldInits(ilg);
 
             if (KeywordCallsites.count() > 0)
                 EmitKeywordCallsiteInits(ilg);
 
+            if ( IsDefType && RT.booleanCast(RT.get(Opts,Compiler.LoadNsKeyword)))
+                EmitLoadNsInitForDeftype(ilg);
+
             ilg.Emit(OpCodes.Ret);
+        }
+        
+        private void EmitLoadNsInitForDeftype(CljILGen ilg)
+        {
+            string nsname = ((Symbol)RT.second(Src)).Namespace;
+            if ( !nsname.Equals("clojure.core"))
+            {
+                ilg.EmitString("clojure.core");
+                ilg.EmitString("require");
+                ilg.EmitCall(Compiler.Method_RT_var2);
+                ilg.EmitCall(Compiler.Method_Var_getRawRoot);
+                ilg.Emit(OpCodes.Castclass, typeof(IFn));
+                ilg.EmitNull();
+                ilg.EmitString(nsname);
+                ilg.EmitCall(Compiler.Method_Symbol_intern2);
+                ilg.EmitCall(Compiler.Methods_IFn_invoke[1]);
+                ilg.Emit(OpCodes.Pop);
+            }
+           
         }
 
         private void EmitKeywordCallsiteInits(CljILGen ilg)
@@ -455,10 +450,10 @@ namespace clojure.lang.CljCompiler.Ast
                 EmitValue(k, ilg);
                 ilg.Emit(OpCodes.Newobj, Compiler.Ctor_KeywordLookupSite_1);
                 ilg.Emit(OpCodes.Dup);
-                FieldBuilder kfb = _keywordLookupSiteFields[i];
+                FieldBuilder kfb = KeywordLookupSiteFields[i];
                 ilg.Emit(OpCodes.Stsfld, kfb);
                 ilg.Emit(OpCodes.Castclass, typeof(ILookupThunk));
-                FieldBuilder tfb = _thunkFields[i];
+                FieldBuilder tfb = ThunkFields[i];
                 ilg.Emit(OpCodes.Stsfld, tfb);
             }
         }
@@ -489,9 +484,9 @@ namespace clojure.lang.CljCompiler.Ast
 
         protected void EmitClosedOverFields(TypeBuilder tb)
         {
-            _closedOverFields = new List<FieldBuilder>(Closes.count());
-            _closedOverFieldsToBindingsMap = new Dictionary<FieldBuilder, LocalBinding>(Closes.count());
-            _closedOverFieldsMap = new Dictionary<LocalBinding, FieldBuilder>(Closes.count());
+            ClosedOverFields = new List<FieldBuilder>(Closes.count());
+            ClosedOverFieldsToBindingsMap = new Dictionary<FieldBuilder, LocalBinding>(Closes.count());
+            ClosedOverFieldsMap = new Dictionary<LocalBinding, FieldBuilder>(Closes.count());
 
             // closed-overs map to instance fields.
             for (ISeq s = RT.keys(Closes); s != null; s = s.next())
@@ -507,7 +502,7 @@ namespace clojure.lang.CljCompiler.Ast
                         attributes |= FieldAttributes.InitOnly;
                 }
 
-                Type type = lb.PrimitiveType ?? typeof(object);
+                Type type = (lb.HasClrType && lb.ClrType != null) ? lb.ClrType : (lb.PrimitiveType ?? typeof(object));
 
                 FieldBuilder fb = markVolatile
                     ? tb.DefineField(lb.Name, type, new Type[] { typeof(IsVolatile) }, Type.EmptyTypes, attributes)
@@ -515,9 +510,9 @@ namespace clojure.lang.CljCompiler.Ast
 
                 GenInterface.SetCustomAttributes(fb, GenInterface.ExtractAttributes(RT.meta(lb.Symbol)));
 
-                _closedOverFields.Add(fb);
-                _closedOverFieldsMap[lb] = fb;
-                _closedOverFieldsToBindingsMap[fb] = lb;
+                ClosedOverFields.Add(fb);
+                ClosedOverFieldsMap[lb] = fb;
+                ClosedOverFieldsToBindingsMap[fb] = lb;
             }
         }
 
@@ -525,16 +520,52 @@ namespace clojure.lang.CljCompiler.Ast
         {
             int count = ProtocolCallsites.count();
 
-            _cachedTypeFields = new List<FieldBuilder>(count);
+            CachedTypeFields = new List<FieldBuilder>(count);
 
 
             for (int i = 0; i < count; i++)
             {
-                _cachedTypeFields.Add(tb.DefineField(CachedClassName(i), typeof(Type), FieldAttributes.Public|FieldAttributes.Static));
+                CachedTypeFields.Add(tb.DefineField(CachedClassName(i), typeof(Type), FieldAttributes.Public|FieldAttributes.Static));
             }
         }
 
-        private ConstructorBuilder EmitConstructor(TypeBuilder fnTB, Type baseType)
+        protected virtual ConstructorBuilder EmitConstructor(TypeBuilder fnTB, Type baseType)
+        {
+            if (IsDefType)
+                return EmitConstructorForDefType(fnTB, baseType);
+            else
+                return EmitConstructorForNonDefType(fnTB, baseType);
+        }
+
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA1801:ReviewUnusedParameters", MessageId = "baseType")]
+        private ConstructorBuilder EmitConstructorForDefType(TypeBuilder fnTB, Type baseType)
+        {
+            ConstructorBuilder cb = fnTB.DefineConstructor(MethodAttributes.Public, CallingConventions.HasThis, CtorTypes());
+            CljILGen gen = new CljILGen(cb.GetILGenerator());
+
+            GenContext.EmitDebugInfo(gen, SpanMap);
+
+            // Pass closed-overs to base class ctor
+
+            gen.EmitLoadArg(0);             // gen.Emit(OpCodes.Ldarg_0);
+            int a = 0;
+            for (ISeq s = RT.keys(Closes); s != null; s = s.next(), a++)
+            {
+                //LocalBinding lb = (LocalBinding)s.first();
+                //FieldBuilder fb = _closedOverFields[a];
+                //bool isVolatile = IsVolatile(_closedOverFieldsToBindingsMap[fb]);
+
+                gen.EmitLoadArg(a + 1);         // gen.Emit(OpCodes.Ldarg, a + 1);
+            }
+            gen.Emit(OpCodes.Call, BaseClassClosedOverCtor);
+
+            gen.Emit(OpCodes.Ret);
+
+            return cb;
+        }
+
+
+        private ConstructorBuilder EmitConstructorForNonDefType(TypeBuilder fnTB, Type baseType)
         {
             ConstructorBuilder cb = fnTB.DefineConstructor(MethodAttributes.Public, CallingConventions.HasThis, CtorTypes());
             CljILGen gen = new CljILGen(cb.GetILGenerator());
@@ -542,7 +573,7 @@ namespace clojure.lang.CljCompiler.Ast
             GenContext.EmitDebugInfo(gen, SpanMap);
 
             //Call base constructor
-            ConstructorInfo baseCtorInfo = baseType.GetConstructor(BindingFlags.Instance|BindingFlags.NonPublic|BindingFlags.Public,null,Type.EmptyTypes,null);
+            ConstructorInfo baseCtorInfo = baseType.GetConstructor(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public, null, Type.EmptyTypes, null);
             if (baseCtorInfo == null)
                 throw new InvalidOperationException("Unable to find default constructor for " + baseType.FullName);
 
@@ -555,7 +586,7 @@ namespace clojure.lang.CljCompiler.Ast
                 gen.EmitLoadArg(0);
                 gen.EmitLoadArg(1);
                 gen.Emit(OpCodes.Castclass, typeof(IPersistentMap));
-                gen.EmitFieldSet(_metaField);
+                gen.EmitFieldSet(MetaField);
             }
 
             // store closed-overs in their fields
@@ -565,8 +596,8 @@ namespace clojure.lang.CljCompiler.Ast
             for (ISeq s = RT.keys(Closes); s != null; s = s.next(), a++)
             {
                 //LocalBinding lb = (LocalBinding)s.first();
-                FieldBuilder fb = _closedOverFields[a];
-                bool isVolatile = IsVolatile(_closedOverFieldsToBindingsMap[fb]);
+                FieldBuilder fb = ClosedOverFields[a];
+                bool isVolatile = IsVolatile(ClosedOverFieldsToBindingsMap[fb]);
 
                 gen.EmitLoadArg(0);             // gen.Emit(OpCodes.Ldarg_0);
                 gen.EmitLoadArg(a + offset);         // gen.Emit(OpCodes.Ldarg, a + 1);
@@ -577,10 +608,11 @@ namespace clojure.lang.CljCompiler.Ast
             return cb;
         }
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA1801:ReviewUnusedParameters", MessageId = "baseType")]
         private ConstructorBuilder EmitFieldOnlyConstructor(TypeBuilder fnTB, Type baseType)
         {
             Type[] ctorTypes = CtorTypes();
-            Type[] altCtorTypes = new Type[ctorTypes.Length - _altCtorDrops];
+            Type[] altCtorTypes = new Type[ctorTypes.Length - AltCtorDrops];
             for (int i = 0; i < altCtorTypes.Length; i++)
                 altCtorTypes[i] = ctorTypes[i];
 
@@ -592,15 +624,16 @@ namespace clojure.lang.CljCompiler.Ast
             for (int i = 0; i < altCtorTypes.Length; i++)
                 gen.EmitLoadArg(i + 1);
 
-            for (int i = 0; i < _altCtorDrops; i++)
+            for (int i = 0; i < AltCtorDrops; i++)
                 gen.EmitNull();
 
-            gen.Emit(OpCodes.Call, _ctorInfo);
+            gen.Emit(OpCodes.Call, CtorInfo);
 
             gen.Emit(OpCodes.Ret);
             return cb;
         }
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA1801:ReviewUnusedParameters", MessageId = "baseType")]
         private ConstructorBuilder EmitNonMetaConstructor(TypeBuilder fnTB, Type baseType)
         {
             Type[] ctorTypes = CtorTypes();
@@ -615,36 +648,10 @@ namespace clojure.lang.CljCompiler.Ast
             gen.EmitNull();     // null meta
             for (int i = 0; i < noMetaCtorTypes.Length; i++)
                 gen.EmitLoadArg(i + 1);
-            gen.Emit(OpCodes.Call, _ctorInfo);
+            gen.Emit(OpCodes.Call, CtorInfo);
             gen.Emit(OpCodes.Ret);
 
             return cb;
-        }
-
-        void EmitSwapThunk(TypeBuilder tb)
-        {
-            MethodBuilder mb = tb.DefineMethod("swapThunk", MethodAttributes.Public | MethodAttributes.HideBySig | MethodAttributes.Virtual, typeof(void), new Type[] { typeof(int), typeof(ILookupThunk) });
-            CljILGen ilg = new CljILGen(mb.GetILGenerator());
-
-            Label endLabel = ilg.DefineLabel();
-            Label[] labels = new Label[KeywordCallsites.count()];
-            for (int i = 0; i < KeywordCallsites.count(); i++)
-                labels[i] = ilg.DefineLabel();
-
-            ilg.EmitLoadArg(1);
-            ilg.Emit(OpCodes.Switch, labels);
-            ilg.Emit(OpCodes.Br, endLabel);
-
-            for (int i = 0; i < KeywordCallsites.count(); i++)
-            {
-                ilg.MarkLabel(labels[i]);
-                ilg.EmitLoadArg(2);
-                ilg.EmitFieldSet(_thunkFields[i]);
-                ilg.Emit(OpCodes.Br, endLabel);
-            }
-
-            ilg.MarkLabel(endLabel);
-            ilg.Emit(OpCodes.Ret);
         }
 
         private void EmitMetaFunctions(TypeBuilder fnTB)
@@ -655,7 +662,7 @@ namespace clojure.lang.CljCompiler.Ast
             if (SupportsMeta)
             {
                 gen.EmitLoadArg(0);
-                gen.EmitFieldGet(_metaField);
+                gen.EmitFieldGet(MetaField);
             }
             else
                 gen.EmitNull();
@@ -668,14 +675,14 @@ namespace clojure.lang.CljCompiler.Ast
             if (SupportsMeta)
             {
                 gen.EmitLoadArg(1);   // meta arg
-                foreach (FieldBuilder fb in _closedOverFields)
+                foreach (FieldBuilder fb in ClosedOverFields)
                 {
                     gen.EmitLoadArg(0);
                     gen.MaybeEmitVolatileOp(fb);
                     gen.EmitFieldGet(fb);
                 }
 
-                gen.EmitNew(_ctorInfo);
+                gen.EmitNew(CtorInfo);
             }
             else
                 gen.EmitLoadArg(0);  //this
@@ -745,7 +752,32 @@ namespace clojure.lang.CljCompiler.Ast
             }
         }
 
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Performance", "CA1800:DoNotCastUnnecessarily")]
+        //  If we don't pick up the ctor after we finalize the type, 
+        //    we sometimes get a ctor which is not a RuntimeConstructorInfo
+        //  This causes System.DynamicILGenerator.Emit(opcode,ContructorInfo) to blow up.
+        //    The error says the ConstructorInfo is null, but there is a second case in the code.
+        //  Thank heavens one can run Reflector on mscorlib.
+        //
+        // We will take the first ctor with indicated number of args.
+        // In our use case, it should be unique.
+        static protected ConstructorInfo GetConstructorWithArgCount(Type t, int numArgs)
+        {
+            ConstructorInfo[] cis = t.GetConstructors();
+            foreach (ConstructorInfo ci in cis)
+            {
+                if (ci.GetParameters().Length == numArgs)
+                {
+                    return ci;
+                }
+            }
+            return null;
+        }
+
+        #endregion
+
+        #region Direct code generation
+
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Maintainability", "CA1506:AvoidExcessiveClassCoupling"), System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Maintainability", "CA1502:AvoidExcessiveComplexity"), System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Performance", "CA1800:DoNotCastUnnecessarily")]
         protected void EmitValue(object value, CljILGen ilg)
         {
             bool partial = true;
@@ -826,7 +858,7 @@ namespace clojure.lang.CljCompiler.Ast
                 {
                     Symbol field = (Symbol)s.first();
                     Type k = Compiler.TagType(Compiler.TagOf(field));
-                    object val = Reflector.GetInstanceFieldOrProperty(value, field.Name);
+                    object val = Reflector.GetInstanceFieldOrProperty(value, Compiler.munge(field.Name));
                     EmitValue(val, ilg);
                     if (k.IsPrimitive)
                     {
@@ -860,8 +892,18 @@ namespace clojure.lang.CljCompiler.Ast
             }
             else if (value is IPersistentVector)
             {
-                EmitListAsObjectArray(value, ilg);
-                ilg.EmitCall(Compiler.Method_RT_vector);
+                IPersistentVector args = (IPersistentVector)value;
+                if (args.count() <= Tuple.MAX_SIZE)
+                {
+                    for (int i = 0; i < args.count(); i++)
+                        EmitValue(args.nth(i), ilg);
+                    ilg.Emit(OpCodes.Call, Compiler.Methods_CreateTuple[args.count()]);
+                }
+                else
+                {
+                    EmitListAsObjectArray(value, ilg);
+                    ilg.EmitCall(Compiler.Method_RT_vector);
+                }
             }
             else if (value is PersistentHashSet)
             {
@@ -949,40 +991,40 @@ namespace clojure.lang.CljCompiler.Ast
         }
 
 
-        static void EmitPrimitive(CljILGen ilg, object val)
-        {
-            switch (Type.GetTypeCode(val.GetType()) )
-            {
-                case TypeCode.Boolean:
-                    ilg.EmitBoolean((bool)val); break;
-                case TypeCode.Byte:
-                    ilg.EmitByte((byte)val); break;
-                case TypeCode.Char:
-                    ilg.EmitChar((char)val); break;
-                case TypeCode.Decimal:
-                    ilg.EmitDecimal((decimal)val); break;
-                case TypeCode.Double:
-                    ilg.EmitDouble((double)val); break;
-                case TypeCode.Int16:
-                    ilg.EmitShort((short)val); break;
-                case TypeCode.Int32:
-                    ilg.EmitInt((int)val); break;
-                case TypeCode.Int64:
-                    ilg.EmitLong((long)val); break;
-                case TypeCode.SByte:
-                    ilg.EmitSByte((sbyte)val); break;
-                case TypeCode.Single:
-                    ilg.EmitSingle((float)val); break;
-                case TypeCode.UInt16:
-                    ilg.EmitUShort((ushort)val); break;
-                case TypeCode.UInt32:
-                    ilg.EmitUInt((uint)val); break;
-                case TypeCode.UInt64:
-                    ilg.EmitULong((ulong)val); break;
-                default:
-                    throw new InvalidOperationException("Unknown constant type in EmitPrimitive");
-            }
-        }
+        //static void EmitPrimitive(CljILGen ilg, object val)
+        //{
+        //    switch (Type.GetTypeCode(val.GetType()) )
+        //    {
+        //        case TypeCode.Boolean:
+        //            ilg.EmitBoolean((bool)val); break;
+        //        case TypeCode.Byte:
+        //            ilg.EmitByte((byte)val); break;
+        //        case TypeCode.Char:
+        //            ilg.EmitChar((char)val); break;
+        //        case TypeCode.Decimal:
+        //            ilg.EmitDecimal((decimal)val); break;
+        //        case TypeCode.Double:
+        //            ilg.EmitDouble((double)val); break;
+        //        case TypeCode.Int16:
+        //            ilg.EmitShort((short)val); break;
+        //        case TypeCode.Int32:
+        //            ilg.EmitInt((int)val); break;
+        //        case TypeCode.Int64:
+        //            ilg.EmitLong((long)val); break;
+        //        case TypeCode.SByte:
+        //            ilg.EmitSByte((sbyte)val); break;
+        //        case TypeCode.Single:
+        //            ilg.EmitSingle((float)val); break;
+        //        case TypeCode.UInt16:
+        //            ilg.EmitUShort((ushort)val); break;
+        //        case TypeCode.UInt32:
+        //            ilg.EmitUInt((uint)val); break;
+        //        case TypeCode.UInt64:
+        //            ilg.EmitULong((ulong)val); break;
+        //        default:
+        //            throw new InvalidOperationException("Unknown constant type in EmitPrimitive");
+        //    }
+        //}
 
         internal void EmitVar(CljILGen ilg, Var var)
         {
@@ -1019,7 +1061,7 @@ namespace clojure.lang.CljCompiler.Ast
             if (Closes.containsKey(lb))
             {
                 ilg.Emit(OpCodes.Ldarg_0); // this
-                FieldBuilder fb = _closedOverFieldsMap[lb];
+                FieldBuilder fb = ClosedOverFieldsMap[lb];
                 ilg.MaybeEmitVolatileOp(IsVolatile(lb));
                 ilg.Emit(OpCodes.Ldfld, fb);
                 if (primType != null)
@@ -1052,7 +1094,7 @@ namespace clojure.lang.CljCompiler.Ast
             if (Closes.containsKey(lb))
             {
                 ilg.Emit(OpCodes.Ldarg_0); // this
-                FieldBuilder fb = _closedOverFieldsMap[lb];
+                FieldBuilder fb = ClosedOverFieldsMap[lb];
                 ilg.MaybeEmitVolatileOp(IsVolatile(lb));
                 ilg.Emit(OpCodes.Ldfld, fb);
             }
@@ -1076,7 +1118,7 @@ namespace clojure.lang.CljCompiler.Ast
                 throw new ArgumentException("Cannot assign to non-mutable: ", lb.Name);
 
             FieldBuilder fb = null;
-            bool hasField = _closedOverFieldsMap.TryGetValue(lb, out fb);
+            bool hasField = ClosedOverFieldsMap.TryGetValue(lb, out fb);
 
             ilg.Emit(OpCodes.Ldarg_0);  // this
 
@@ -1104,12 +1146,13 @@ namespace clojure.lang.CljCompiler.Ast
         }
 
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA1801:ReviewUnusedParameters", MessageId = "localBuilder")]
         internal void EmitLetFnInits(CljILGen ilg, LocalBuilder localBuilder, ObjExpr objx, IPersistentSet letFnLocals)
         {
-            if (_typeBuilder != null)
+            if (TypeBuilder != null)
             {
                 // Full compile
-                ilg.Emit(OpCodes.Castclass, _typeBuilder);
+                ilg.Emit(OpCodes.Castclass, TypeBuilder);
 
                 for (ISeq s = RT.keys(Closes); s != null; s = s.next())
                 {
@@ -1117,7 +1160,7 @@ namespace clojure.lang.CljCompiler.Ast
                     if (letFnLocals.contains(lb))
                     {
                         FieldBuilder fb;
-                        _closedOverFieldsMap.TryGetValue(lb, out fb);
+                        ClosedOverFieldsMap.TryGetValue(lb, out fb);
 
                         Type primt = lb.PrimitiveType;
                         ilg.Emit(OpCodes.Dup);  // this
@@ -1182,6 +1225,8 @@ namespace clojure.lang.CljCompiler.Ast
         }
 
         public bool HasNormalExit() { return true; }
+
+        #endregion
 
         #endregion
     }

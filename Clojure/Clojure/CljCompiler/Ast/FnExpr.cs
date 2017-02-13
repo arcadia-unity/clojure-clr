@@ -20,22 +20,21 @@ using System.Reflection;
 
 namespace clojure.lang.CljCompiler.Ast
 {
-    class FnExpr : ObjExpr
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "Fn")]
+    public class FnExpr : ObjExpr
     {
         #region Data
 
         static readonly Keyword KW_ONCE = Keyword.intern(null, "once");
 
         FnMethod _variadicMethod = null;
-
+        public FnMethod VariadicMethod { get { return _variadicMethod; } }
         bool IsVariadic { get { return _variadicMethod != null; } }
 
         bool _hasMeta;
+        protected override bool SupportsMeta { get { return _hasMeta; } }
 
-        protected override bool SupportsMeta
-        {
-            get { return _hasMeta; }
-        }
+        bool _hasEnclosingMethod;
 
         private int _dynMethodMapKey = RT.nextID();
         public int DynMethodMapKey { get { return _dynMethodMapKey; } }
@@ -59,20 +58,27 @@ namespace clojure.lang.CljCompiler.Ast
             ObjMethod enclosingMethod = (ObjMethod)Compiler.MethodVar.deref();
 
             string baseName = enclosingMethod != null
-                ? (enclosingMethod.Objx.Name + "$")
+                ? enclosingMethod.Objx.Name
                 : Compiler.munge(Compiler.CurrentNamespace.Name.Name) + "$";
 
-            if (RT.second(form) is Symbol)
-                name = ((Symbol)RT.second(form)).Name;
+            Symbol nm = RT.second(form) as Symbol;
 
-            string simpleName = name != null ?
-                        (Compiler.munge(name).Replace(".", "_DOT_")
-                        + (enclosingMethod != null ? "__" + RT.nextID() : ""))
-                        : ("fn"
-                          + "__" + RT.nextID());            
+            if (nm != null )
+            {
+                name = nm.Name + "__" + RT.nextID();
+            }
+            else
+            {
+                if (name == null)
+                    name = "fn__" + RT.nextID();
+                else if (enclosingMethod != null)
+                    name += "__" + RT.nextID();
+            }
 
-            _name = baseName + simpleName;
-            InternalName = _name.Replace('.', '/');
+            string simpleName = Compiler.munge(name).Replace(".", "_DOT_");
+
+            Name = baseName + simpleName;
+            InternalName = Name.Replace('.', '/');
         }
 
         #endregion
@@ -99,16 +105,23 @@ namespace clojure.lang.CljCompiler.Ast
 
         #region Parsing
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Maintainability", "CA1502:AvoidExcessiveComplexity"), System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Maintainability", "CA1506:AvoidExcessiveClassCoupling")]
         public static Expr Parse(ParserContext pcon, ISeq form, string name)
         {
             ISeq origForm = form;
 
             FnExpr fn = new FnExpr(Compiler.TagOf(form));
-            fn._src = form;
+            fn.Src = form;
+
+            Keyword retKey = Keyword.intern(null, "rettag");  // TODO: make static
+            object retTag = RT.get(RT.meta(form), retKey);
+            ObjMethod enclosingMethod = (ObjMethod)Compiler.MethodVar.deref();
+            fn._hasEnclosingMethod = enclosingMethod != null;
+
 
             if (((IMeta)form.first()).meta() != null)
             {
-                fn._onceOnly = RT.booleanCast(RT.get(RT.meta(form.first()), KW_ONCE));
+                fn.OnceOnly = RT.booleanCast(RT.get(RT.meta(form.first()), KW_ONCE));
             }
 
             fn.ComputeNames(form, name);
@@ -116,11 +129,10 @@ namespace clojure.lang.CljCompiler.Ast
             List<string> prims = new List<string>();
 
             //arglist might be preceded by symbol naming this fn
-            if (RT.second(form) is Symbol)
+             Symbol nm = RT.second(form) as Symbol;
+            if (nm != null)
             {
-                Symbol nm = (Symbol)RT.second(form);
-                fn._thisName = nm.Name;
-                fn._isStatic = false; // RT.booleanCast(RT.get(nm.meta(), Compiler.STATIC_KEY));
+                fn.ThisName = nm.Name;
                 form = RT.cons(Compiler.FnSym, RT.next(RT.next(form)));
             }
 
@@ -154,10 +166,16 @@ namespace clojure.lang.CljCompiler.Ast
                         Compiler.NoRecurVar, null));
                     SortedDictionary<int, FnMethod> methods = new SortedDictionary<int, FnMethod>();
                     FnMethod variadicMethod = null;
+                    bool usesThis = false;
 
                     for (ISeq s = RT.next(form); s != null; s = RT.next(s))
                     {
-                        FnMethod f = FnMethod.Parse(fn, (ISeq)RT.first(s), fn._isStatic);
+                        FnMethod f = FnMethod.Parse(fn, (ISeq)RT.first(s), retTag);
+                        if ( f.UsesThis)
+                        {
+                            //Console.WriteLine("{0} uses this",fn.Name);
+                            usesThis = true;
+                        }
                         if (f.IsVariadic)
                         {
                             if (variadicMethod == null)
@@ -176,8 +194,7 @@ namespace clojure.lang.CljCompiler.Ast
                     if (variadicMethod != null && methods.Count > 0 && methods.Keys.Max() >= variadicMethod.NumParams)
                         throw new ParseException("Can't have fixed arity methods with more params than the variadic method.");
 
-                    if (fn._isStatic && fn.Closes.count() > 0)
-                        throw new ParseException("static fns can't be closures");
+                    fn.CanBeDirect = !fn._hasEnclosingMethod && fn.Closes.count() == 0 && !usesThis;
 
                     IPersistentCollection allMethods = null;
                     foreach (FnMethod method in methods.Values)
@@ -185,7 +202,24 @@ namespace clojure.lang.CljCompiler.Ast
                     if (variadicMethod != null)
                         allMethods = RT.conj(allMethods, variadicMethod);
 
-                    fn._methods = allMethods;
+                    if ( fn.CanBeDirect )
+                    {
+                        for (ISeq s = RT.seq(allMethods); s != null; s = s.next())
+                        {
+                            FnMethod fm = s.first() as FnMethod;
+                            if ( fm.Locals != null)
+                            {
+                                for (ISeq sl = RT.seq(RT.keys(fm.Locals)); sl != null; sl = sl.next())
+                                {
+                                    LocalBinding lb = sl.first() as LocalBinding;
+                                    if ( lb.IsArg)
+                                        lb.Index -= 1;
+                                }
+                            }
+                        }
+                    }
+
+                    fn.Methods = allMethods;
                     fn._variadicMethod = variadicMethod;
                     fn.Keywords = (IPersistentMap)Compiler.KeywordsVar.deref();
                     fn.Vars = (IPersistentMap)Compiler.VarsVar.deref();
@@ -194,7 +228,7 @@ namespace clojure.lang.CljCompiler.Ast
                     fn.ProtocolCallsites = (IPersistentVector)Compiler.ProtocolCallsitesVar.deref();
                     fn.VarCallsites = (IPersistentSet)Compiler.VarCallsitesVar.deref();
 
-                    fn._constantsID = RT.nextID();
+                    fn.ConstantsID = RT.nextID();
                 }
                 finally
                 {
@@ -204,7 +238,7 @@ namespace clojure.lang.CljCompiler.Ast
 
                 IPersistentMap fmeta = RT.meta(origForm);
                 if (fmeta != null)
-                    fmeta = fmeta.without(RT.LineKey).without(RT.ColumnKey).without(RT.SourceSpanKey).without(RT.FileKey);
+                    fmeta = fmeta.without(RT.LineKey).without(RT.ColumnKey).without(RT.SourceSpanKey).without(RT.FileKey).without(retKey);
                 fn._hasMeta = RT.count(fmeta) > 0;
 
 
@@ -216,7 +250,7 @@ namespace clojure.lang.CljCompiler.Ast
                     fn.IsVariadic ? typeof(RestFn) : typeof(AFunction),
                     null,
                     primTypes,
-                    fn._onceOnly,
+                    fn.OnceOnly,
                     newContext);
 
                 if (fn.SupportsMeta)
@@ -234,7 +268,7 @@ namespace clojure.lang.CljCompiler.Ast
 
         internal void AddMethod(FnMethod method)
         {
-            _methods = RT.conj(_methods,method);
+            Methods = RT.conj(Methods,method);
         }
 
 
@@ -313,23 +347,23 @@ namespace clojure.lang.CljCompiler.Ast
 
         protected override void EmitMethods(TypeBuilder tb)
         {
-            for (ISeq s = RT.seq(_methods); s != null; s = s.next())
+            for (ISeq s = RT.seq(Methods); s != null; s = s.next())
             {
                 FnMethod method = (FnMethod)s.first();
                 method.Emit(this, tb);
             }
 
             if (IsVariadic)
-                EmitGetRequiredArityMethod(_typeBuilder, _variadicMethod.RequiredArity);
+                EmitGetRequiredArityMethod(TypeBuilder, _variadicMethod.RequiredArity);
 
             List<int> supportedArities = new List<int>();
-            for (ISeq s = RT.seq(_methods); s != null; s = s.next())
+            for (ISeq s = RT.seq(Methods); s != null; s = s.next())
             {
                 FnMethod method = (FnMethod)s.first();
                 supportedArities.Add(method.NumParams);
             }
 
-            EmitHasArityMethod(_typeBuilder, supportedArities, IsVariadic, IsVariadic ? _variadicMethod.RequiredArity : 0);
+            EmitHasArityMethod(TypeBuilder, supportedArities, IsVariadic, IsVariadic ? _variadicMethod.RequiredArity : 0);
         }
 
         static void EmitGetRequiredArityMethod(TypeBuilder tb, int requiredArity)

@@ -28,23 +28,39 @@ using System.Reflection.Emit;
 
 namespace clojure.lang.CljCompiler.Ast
 {
-    abstract class MethodExpr : HostExpr
+    public abstract class MethodExpr : HostExpr
     {
         #region Data
 
         protected readonly string _methodName;
-        protected readonly List<HostArg> _args;
-        protected readonly List<Type> _typeArgs;
+        public string MethodName { get { return _methodName; } }
+        
+        protected readonly IList<HostArg> _args;
+        public IList<HostArg> Args { get { return _args; } }
+        
+        protected readonly IList<Type> _typeArgs;
+        public IList<Type> TypeArgs { get { return _typeArgs; } }
+        
         protected MethodInfo _method;
+        public MethodInfo Method { get { return _method; } }
+        
         protected readonly string _source;
+        public string Source { get { return _source; } }
+        
         protected readonly IPersistentMap _spanMap;
+        public IPersistentMap SpanMap { get { return _spanMap; } }
+        
         protected readonly Symbol _tag;
+        public Symbol Tag { get { return _tag; } }
+        
+        protected readonly bool _tailPosition;
+        public bool TailPosition { get { return _tailPosition; } }
 
         #endregion
 
         #region C-tors
 
-        protected MethodExpr(string source, IPersistentMap spanMap, Symbol tag, string methodName, List<Type> typeArgs, List<HostArg> args)
+        protected MethodExpr(string source, IPersistentMap spanMap, Symbol tag, string methodName, IList<Type> typeArgs, IList<HostArg> args, bool tailPosition)
         {
             _source = source;
             _spanMap = spanMap;
@@ -52,6 +68,7 @@ namespace clojure.lang.CljCompiler.Ast
             _typeArgs = typeArgs;
             _args = args;
             _tag = tag;
+            _tailPosition = tailPosition;
         }
 
         #endregion
@@ -119,17 +136,25 @@ namespace clojure.lang.CljCompiler.Ast
             }
 
             EmitTypedArgs(objx, ilg, _method.GetParameters(), _args);
+
+            // IN JVM:
+            //if (_tailPosition)
+            //    _method.EmitClearThis(ilg);
+
             if (IsStaticCall)
             {
                 if (Intrinsics.HasOp(_method))
-                    Intrinsics.EmitOp(_method,ilg);
+                    Intrinsics.EmitOp(_method, ilg);
                 else
                     ilg.Emit(OpCodes.Call, _method);
             }
+            else if (_method.IsVirtual)
+                ilg.Emit(OpCodes.Callvirt, _method);
             else
-                ilg.Emit(OpCodes.Callvirt, _method); 
+                ilg.Emit(OpCodes.Call, _method);
         }
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1707:IdentifiersShouldNotContainUnderscores")]
         public static readonly MethodInfo Method_MethodExpr_GetDelegate = typeof(MethodExpr).GetMethod("GetDelegate");
  
         public static readonly Dictionary<int, Delegate> DelegatesMap = new Dictionary<int, Delegate>();
@@ -174,7 +199,7 @@ namespace clojure.lang.CljCompiler.Ast
             //       emit the args
             //       emit the call (slightly different for light compile vs full)
             //
-
+            
             //  Build the parameter list
 
             List<ParameterExpression> paramExprs = new List<ParameterExpression>(_args.Count + 1);
@@ -285,6 +310,7 @@ namespace clojure.lang.CljCompiler.Ast
             EmitDynamicCallPostlude(lambda, delType, mbLambda, ilg);
         }
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Design", "CA1011:ConsiderPassingBaseTypesAsParameters"), System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA1801:ReviewUnusedParameters", MessageId = "objx")]
         public static void EmitByRefArg(HostArg ha, ObjExpr objx, CljILGen ilg)
         {
             if (ha.LocalBinding.IsArg)
@@ -295,7 +321,8 @@ namespace clojure.lang.CljCompiler.Ast
                 ilg.Emit(OpCodes.Ldloca, ha.LocalBinding.LocalVar);
         }
 
-        static public void EmitDynamicCallPreamble(DynamicExpression dyn, IPersistentMap spanMap, string methodName, Type returnType, List<ParameterExpression> paramExprs, Type[] paramTypes, CljILGen ilg, out LambdaExpression lambda, out Type delType, out MethodBuilder mbLambda)
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Design", "CA1011:ConsiderPassingBaseTypesAsParameters")]
+        static public void EmitDynamicCallPreamble(DynamicExpression dyn, IPersistentMap spanMap, string methodName, Type returnType, IList<ParameterExpression> paramExprs, Type[] paramTypes, CljILGen ilg, out LambdaExpression lambda, out Type delType, out MethodBuilder mbLambda)
         {
             Expression call = dyn;
 
@@ -340,6 +367,7 @@ namespace clojure.lang.CljCompiler.Ast
         }
 
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Design", "CA1011:ConsiderPassingBaseTypesAsParameters"), System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA1801:ReviewUnusedParameters", MessageId = "lambda")]
         static public void EmitDynamicCallPostlude(LambdaExpression lambda, Type delType, MethodBuilder mbLambda, CljILGen ilg)
         {
                GenContext context = Compiler.CompilerContextVar.deref() as GenContext;
@@ -371,7 +399,7 @@ namespace clojure.lang.CljCompiler.Ast
             }
         }
 
-        public static void EmitTypedArgs(ObjExpr objx, CljILGen ilg, ParameterInfo[] parms, List<HostArg> args)
+        public static void EmitTypedArgs(ObjExpr objx, CljILGen ilg, ParameterInfo[] parms, IList<HostArg> args)
         {
             for (int i = 0; i < parms.Length; i++)
             {
@@ -400,6 +428,7 @@ namespace clojure.lang.CljCompiler.Ast
             }
         }
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Design", "CA1011:ConsiderPassingBaseTypesAsParameters")]
         public static void EmitTypedArgs(ObjExpr objx, CljILGen ilg, ParameterInfo[] parms, IPersistentVector args)
         {
             for (int i = 0; i < parms.Length; i++)

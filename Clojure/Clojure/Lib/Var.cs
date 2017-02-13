@@ -84,10 +84,10 @@ namespace clojure.lang
                 return "Unbound: " + _v.ToString();
             }
 
-            public Object throwArity(int n)
-            {
-                throw new InvalidOperationException("Attempting to call unbound fn: " + _v.ToString());
-            }
+            //public Object throwArity(int n)
+            //{
+            //    throw new InvalidOperationException("Attempting to call unbound fn: " + _v.ToString());
+            //}
         }
 
         #endregion
@@ -585,7 +585,7 @@ namespace clojure.lang
         /// Unbind the var's root value.
         /// </summary>
         [MethodImpl(MethodImplOptions.Synchronized)]
-        void UnbindRoot()
+        internal void UnbindRoot()
         {
             _root = new Unbound(this);
             ++_rev;

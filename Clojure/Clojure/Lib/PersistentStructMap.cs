@@ -13,6 +13,8 @@
  **/
 
 using System;
+using System.Collections;
+using System.Collections.Generic;
 
 namespace clojure.lang
 {
@@ -21,7 +23,7 @@ namespace clojure.lang
     /// </summary>
     /// <remarks>See the Clojure API for more information.</remarks>
     [Serializable]
-    public class PersistentStructMap : APersistentMap, IObj
+    public class PersistentStructMap : APersistentMap, IObj, IEnumerable<IMapEntry>, IDictionary<Object, Object>
     {
 
         #region Internal classes
@@ -357,7 +359,7 @@ namespace clojure.lang
             IMapEntry me = _def.Keyslots.entryAt(key);
             return me == null
                 ? _ext.entryAt(key)
-                : new MapEntry(me.key(), _vals[Util.ConvertToInt(me.val())]);
+                : (IMapEntry)Tuple.create(me.key(), _vals[Util.ConvertToInt(me.val())]);
         }
 
         /// <summary>
@@ -384,7 +386,7 @@ namespace clojure.lang
             int? i = (int?)_def.Keyslots.valAt(key);
             if (i.HasValue)
                 return _vals[i.Value];
-            return _ext.valAt(key);
+            return _ext.valAt(key,notFound);
         }
 
         #endregion
@@ -440,6 +442,33 @@ namespace clojure.lang
                 ? this
                 : makeNew(_meta, _def, _vals, newExt);
          }
+
+        #endregion
+
+        #region Enumerators
+
+        public override IEnumerator<KeyValuePair<object, object>> GetEnumerator()
+        {
+            var enumerator =  ((IEnumerator<IMapEntry>)this);
+            while (enumerator.MoveNext())
+            {
+                var ime = enumerator.Current;
+                yield return new KeyValuePair<object,object>(ime.key(),ime.val());
+            }
+        }
+
+        IEnumerator IEnumerable.GetEnumerator()
+        {
+            return ((IEnumerable<IMapEntry>)this).GetEnumerator();
+        }
+
+        IEnumerator<IMapEntry> IEnumerable<IMapEntry>.GetEnumerator()
+        {
+            foreach (IMapEntry ime in _def.Keyslots)
+                yield return (IMapEntry) Tuple.create(ime.key(), _vals[(int)ime.val()]);
+            foreach ( IMapEntry ime in _ext)
+                yield return ime;
+        }
 
         #endregion
 
@@ -522,7 +551,7 @@ namespace clojure.lang
             /// <returns>The first item.</returns>
             public override object first()
             {
-                return new MapEntry(_keys.first(),_vals[_i]);
+                return Tuple.create(_keys.first(),_vals[_i]);
             }
 
             /// <summary>

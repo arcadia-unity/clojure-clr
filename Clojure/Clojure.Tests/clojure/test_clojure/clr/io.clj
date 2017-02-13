@@ -85,6 +85,12 @@
       (finally
        (.Delete f)))))
 
+(deftest test-streams-nil
+  (is (thrown-with-msg? ArgumentException #"Cannot open.*nil" (text-reader nil)))                  ;;; IllegalArgumentException
+  (is (thrown-with-msg? ArgumentException #"Cannot open.*nil" (text-writer nil)))                  ;;; IllegalArgumentException
+  (is (thrown-with-msg? ArgumentException #"Cannot open.*nil" (input-stream nil)))            ;;; IllegalArgumentException
+  (is (thrown-with-msg? ArgumentException #"Cannot open.*nil" (output-stream nil))))          ;;; IllegalArgumentException
+
 (defn bytes-should-equal [byte-array-1 byte-array-2 msg]
   (is (= |System.Byte[]| (class byte-array-1) (class byte-array-2)) msg)
   (is (= (into []  byte-array-1) (into []  byte-array-2)) msg))
@@ -175,9 +181,8 @@
 ;        (stream-should-have s bytes msg)))))
 
 ;(deftest test-socket-iofactory
-;  (let [port 65321
-;        server-socket (ServerSocket. port)
-;        client-socket (Socket. "localhost" port)]
+;  (let [server-socket (ServerSocket. 0)
+;        client-socket (Socket. "localhost" (.getLocalPort server-socket))]
 ;    (try
 ;      (is (instance? InputStream (input-stream client-socket)))
 ;      (is (instance? OutputStream (output-stream client-socket)))

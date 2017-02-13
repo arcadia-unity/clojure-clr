@@ -33,7 +33,7 @@ namespace Clojure.Tests.LibTests
         [Test]
         public void CreateOnISeqReturnsCorrectCount()
         {
-            Range r = new Range(2,5);
+            ISeq r = LongRange.create(2,5);
             PersistentVector v = PersistentVector.create(r);
 
             Expect(v.count(),EqualTo(r.count()));
@@ -42,7 +42,7 @@ namespace Clojure.Tests.LibTests
         [Test]
         public void CreateOnISeqHasItems()
         {
-            Range r = new Range(2, 5);
+            ISeq r = LongRange.create(2, 5);
             PersistentVector v = PersistentVector.create(r);
 
             Expect(v.nth(0), EqualTo(2));
@@ -54,7 +54,8 @@ namespace Clojure.Tests.LibTests
         public void CreateOnISeqWithManyItemsWorks()
         {
             // Want to bust out of the first tail, so need to insert more than 32 elements.
-            Range r = new Range(2, 1000);
+            ISeq r = LongRange.create(2, 1000);
+
             PersistentVector v = PersistentVector.create(r);
 
             Expect(v.count(), EqualTo(r.count()));
@@ -68,7 +69,7 @@ namespace Clojure.Tests.LibTests
             // Want to bust out of the first tail, so need to insert more than 32 elements.
             // Let's get out of the second level, too.
 
-            Range r = new Range(2, 100000);
+            ISeq r = LongRange.create(2, 100000);
             PersistentVector v = PersistentVector.create(r);
 
             Expect(v.count(), EqualTo(r.count()));
@@ -122,7 +123,7 @@ namespace Clojure.Tests.LibTests
         [Test]
         public void AssocNReplacesInRangeForSmall()
         {
-            Range r = new Range(2, 5);
+            ISeq r = LongRange.create(2, 5); 
             PersistentVector v1 = PersistentVector.create(r);
             IPersistentVector v2 = v1.assocN(1,10);
 
@@ -139,7 +140,7 @@ namespace Clojure.Tests.LibTests
         [Test]
         public void AssocNAddsAtEndForSmall()
         {
-            Range r = new Range(2, 5);
+            ISeq r = LongRange.create(2, 5);
             PersistentVector v1 = PersistentVector.create(r);
             IPersistentVector v2 = v1.assocN(3, 10);
 
@@ -158,7 +159,7 @@ namespace Clojure.Tests.LibTests
         [ExpectedException(typeof(ArgumentOutOfRangeException))]
         public void AssocNOutOfRangeLowThrowsException()
         {
-            Range r = new Range(2, 5);
+            ISeq r = LongRange.create(2, 5);
             PersistentVector v1 = PersistentVector.create(r);
             v1.assocN(-4, 10);
         }
@@ -167,7 +168,7 @@ namespace Clojure.Tests.LibTests
         [ExpectedException(typeof(ArgumentOutOfRangeException))]
         public void AssocNOutOfRangeHighThrowsException()
         {
-            Range r = new Range(2, 5);
+            ISeq r = LongRange.create(2, 5);
             PersistentVector v1 = PersistentVector.create(r);
             v1.assocN(4, 10);
         }
@@ -186,7 +187,7 @@ namespace Clojure.Tests.LibTests
         [Test]
         public void AssocNChangesForBig()
         {
-            Range r = new Range(2, 100000);
+            ISeq r = LongRange.create(2, 100000);
             PersistentVector v1 = PersistentVector.create(r);
             IPersistentVector v2 = v1;
 
@@ -269,7 +270,7 @@ namespace Clojure.Tests.LibTests
         [Test]
         public void PopOnSmallReturnsOneLess()
         {
-            Range r = new Range(2, 20);
+            ISeq r = LongRange.create(2, 20);
             PersistentVector v = PersistentVector.create(r);
             IPersistentStack s = v.pop();
 
@@ -280,7 +281,7 @@ namespace Clojure.Tests.LibTests
         [Test]
         public void PopOnBigWorks()
         {
-            Range r = new Range(0, 100000);
+            ISeq r = LongRange.create(0,100000);
             PersistentVector v = PersistentVector.create(r);
             IPersistentStack s = v;
             for (int i = 16; i < 100000; i++)
@@ -289,7 +290,6 @@ namespace Clojure.Tests.LibTests
             Expect(v.count(), EqualTo(r.count()));
             Expect(s.count(), EqualTo(16));
         }
-
 
         #endregion
 

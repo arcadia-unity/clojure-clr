@@ -21,11 +21,13 @@ using Microsoft.Scripting.Generation;
 
 namespace clojure.lang.CljCompiler.Ast
 {
-    sealed class NewInstanceExpr : ObjExpr
+    public sealed class NewInstanceExpr : ObjExpr
     {
         #region Data
 
-        Dictionary<IPersistentVector,List<MethodInfo>> _methodMap;
+        Dictionary<IPersistentVector,IList<MethodInfo>> _methodMap;
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Design", "CA1006:DoNotNestGenericTypesInMemberSignatures")]
+        public Dictionary<IPersistentVector, IList<MethodInfo>> MethodMap { get { return _methodMap; } }
 
         #endregion
 
@@ -42,6 +44,7 @@ namespace clojure.lang.CljCompiler.Ast
         
         public sealed class DefTypeParser : IParser
         {
+            [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1725:ParameterNamesShouldMatchBaseDeclaration", MessageId = "1#")]
             public Expr Parse(ParserContext pcon, object frm)
             {
                 // frm is: (deftype* tagname classname [fields] :implements [interfaces] :tag tagname methods*)
@@ -49,7 +52,7 @@ namespace clojure.lang.CljCompiler.Ast
                 ISeq rform = (ISeq)frm;
                 rform = RT.next(rform);
 
-                string tagname = ((Symbol)rform.first()).ToString();
+                string tagname = ((Symbol)rform.first()).getName();
                 rform = rform.next();
                 Symbol classname = (Symbol)rform.first();
                 rform = rform.next();
@@ -63,7 +66,7 @@ namespace clojure.lang.CljCompiler.Ast
                 }
 
                 ObjExpr ret = Build((IPersistentVector)RT.get(opts, Compiler.ImplementsKeyword, PersistentVector.EMPTY), fields, null, tagname, classname,
-                             (Symbol)RT.get(opts, RT.TagKey), rform, frm);
+                             (Symbol)RT.get(opts, RT.TagKey), rform, frm,opts);
 
                 return ret;
             }
@@ -72,6 +75,7 @@ namespace clojure.lang.CljCompiler.Ast
 
         public sealed class ReifyParser : IParser
         {
+            [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1725:ParameterNamesShouldMatchBaseDeclaration", MessageId = "1#")]
             public Expr Parse(ParserContext pcon, object frm)
             {
                 // frm is:  (reify this-name? [interfaces] (method-name [args] body)* )
@@ -89,7 +93,7 @@ namespace clojure.lang.CljCompiler.Ast
 
                 rform = RT.next(rform);
 
-                ObjExpr ret = Build(interfaces, null, null, className, Symbol.intern(className), null, rform,frm);
+                ObjExpr ret = Build(interfaces, null, null, className, Symbol.intern(className), null, rform,frm, null);
                 IObj iobj = frm as IObj;
 
                 if (iobj != null && iobj.meta() != null)
@@ -99,6 +103,7 @@ namespace clojure.lang.CljCompiler.Ast
             }
         }
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA1801:ReviewUnusedParameters", MessageId = "typeTag")]
         internal static ObjExpr Build(
             IPersistentVector interfaceSyms, 
             IPersistentVector fieldSyms, 
@@ -107,17 +112,19 @@ namespace clojure.lang.CljCompiler.Ast
             Symbol className, 
             Symbol typeTag, 
             ISeq methodForms,
-            Object frm)
+            Object frm,
+            IPersistentMap opts)
         {
             NewInstanceExpr ret = new NewInstanceExpr(null);
-            ret._src = frm;
-            ret._name = className.ToString();
-            ret._classMeta = GenInterface.ExtractAttributes(RT.meta(className));
-            ret.InternalName = ret._name;  // ret.Name.Replace('.', '/');
+            ret.Src = frm;
+            ret.Name = className.ToString();
+            ret.ClassMeta = GenInterface.ExtractAttributes(RT.meta(className));
+            ret.InternalName = ret.Name;  // ret.Name.Replace('.', '/');
             // Java: ret.objtype = Type.getObjectType(ret.internalName);
+            ret.Opts = opts;
 
             if (thisSym != null)
-                ret._thisName = thisSym.Name;
+                ret.ThisName = thisSym.Name;
 
             if (fieldSyms != null)
             {
@@ -126,7 +133,7 @@ namespace clojure.lang.CljCompiler.Ast
                 for (int i = 0; i < fieldSyms.count(); i++)
                 {
                     Symbol sym = (Symbol)fieldSyms.nth(i);
-                    LocalBinding lb = new LocalBinding(-1, sym, null, new MethodParamExpr(Compiler.TagType(Compiler.TagOf(sym))), false, false, false);
+                    LocalBinding lb = new LocalBinding(-1, sym, null, new MethodParamExpr(Compiler.TagType(Compiler.TagOf(sym))), typeof(Object), false, false, false);
                     fmap = fmap.assoc(sym, lb);
                     closesvec[i * 2] = lb;
                     closesvec[i * 2 + 1] = lb;
@@ -136,7 +143,7 @@ namespace clojure.lang.CljCompiler.Ast
                 ret.Closes = new PersistentArrayMap(closesvec);
                 ret.Fields = fmap;
                 for (int i = fieldSyms.count() - 1; i >= 0 && (((Symbol)fieldSyms.nth(i)).Name.Equals("__meta") || ((Symbol)fieldSyms.nth(i)).Name.Equals("__extmap")); --i)
-                    ret._altCtorDrops++;
+                    ret.AltCtorDrops++;
             }
 
             // Java TODO: set up volatiles
@@ -152,8 +159,8 @@ namespace clojure.lang.CljCompiler.Ast
             }
             Type superClass = typeof(Object);
 
-            Dictionary<IPersistentVector, List<MethodInfo>> overrideables;
-            Dictionary<IPersistentVector, List<MethodInfo>> explicits;
+            Dictionary<IPersistentVector, IList<MethodInfo>> overrideables;
+            Dictionary<IPersistentVector, IList<MethodInfo>> explicits;
             GatherMethods(superClass, RT.seq(interfaces), out overrideables, out explicits);
 
             ret._methodMap = overrideables;
@@ -169,11 +176,8 @@ namespace clojure.lang.CljCompiler.Ast
 
             GenContext genC = context.WithNewDynInitHelper(ret.InternalName + "__dynInitHelper_" + RT.nextID().ToString());
 
-            Type stub = CompileStub(genC, superClass, ret, SeqToTypeArray(interfaces), frm);
-            Symbol thisTag = Symbol.intern(null, stub.FullName);
-            //Symbol stubTag = Symbol.intern(null,stub.FullName);
-            //Symbol thisTag = Symbol.intern(null, tagName);
-
+            Type baseClass = ret.CompileBaseClass(genC, superClass, SeqToTypeArray(interfaces), frm);
+            Symbol thisTag = Symbol.intern(null, baseClass.FullName);
 
             try
             {
@@ -197,9 +201,10 @@ namespace clojure.lang.CljCompiler.Ast
                             Compiler.MethodVar, null,
                             Compiler.LocalEnvVar, ret.Fields,
                             Compiler.CompileStubSymVar, Symbol.intern(null, tagName),
-                            Compiler.CompileStubClassVar, stub
+                            Compiler.CompileStubClassVar, baseClass,
+                            Compiler.CompilingDefTypeVar, true
                             ));
-                    ret._hintedFields = RT.subvec(fieldSyms, 0, fieldSyms.count() - ret._altCtorDrops);
+                    ret.HintedFields = RT.subvec(fieldSyms, 0, fieldSyms.count() - ret.AltCtorDrops);
                 }
                 // now (methodname [args] body)*
 
@@ -212,11 +217,11 @@ namespace clojure.lang.CljCompiler.Ast
                     methods = RT.conj(methods, m);
                 }
 
-                ret._methods = methods;
+                ret.Methods = methods;
                 ret.Keywords = (IPersistentMap)Compiler.KeywordsVar.deref();
                 ret.Vars = (IPersistentMap)Compiler.VarsVar.deref();
                 ret.Constants = (PersistentVector)Compiler.ConstantsVar.deref();
-                ret._constantsID = RT.nextID();
+                ret.ConstantsID = RT.nextID();
                 ret.KeywordCallsites = (IPersistentVector)Compiler.KeywordCallsitesVar.deref();
                 ret.ProtocolCallsites = (IPersistentVector)Compiler.ProtocolCallsitesVar.deref();
                 ret.VarCallsites = (IPersistentSet)Compiler.VarCallsitesVar.deref();
@@ -228,13 +233,10 @@ namespace clojure.lang.CljCompiler.Ast
                 Var.popThreadBindings();
             }
 
-            // TOD:  Really, the first stub here should be 'superclass' but can't handle hostexprs nested in method bodies -- reify method compilation takes place before this sucker is compiled, so can't replace the call.
-            // Might be able to flag stub classes and not try to convert, leading to a dynsite.
+            // TOD:  Really, the first baseclass here should be 'superclass' but can't handle hostexprs nested in method bodies -- reify method compilation takes place before this sucker is compiled, so can't replace the call.
+            // Might be able to flag baseclass classes and not try to convert, leading to a dynsite.
 
-            //if (RT.CompileDLR)
-            ret.Compile(stub, stub, interfaces, false, genC);
-            //else
-            //    ret.CompileNoDlr(stub, stub, interfaces, false, genC);
+            ret.Compile(baseClass, baseClass, interfaces, false, genC);
 
             Compiler.RegisterDuplicateType(ret.CompiledType);
 
@@ -251,6 +253,8 @@ namespace clojure.lang.CljCompiler.Ast
         }
 
         /***
+         * THIS COMMENT IS FROM THE JVM version.Not exactly true for us.
+         * 
          * Current host interop uses reflection, which requires pre-existing classes
          * Work around this by:
          * Generate a stub class that has the same interfaces and fields as the class we are generating.
@@ -258,29 +262,66 @@ namespace clojure.lang.CljCompiler.Ast
          * Unmunge the name (using a magic prefix) on any code gen for classes
          */
 
-        // TODO: Preparse method heads to pick up signatures, implement those methods as abstract or as NotImpelmented so that Reflection can pick up calls during compilation and avoide a callsite.
-        static Type CompileStub(GenContext context, Type super, NewInstanceExpr ret, Type[] interfaces, Object frm)
+        /*
+         * We can't just play fake renaming games here.
+         * We need an actual base class under our class.
+         * The base class:
+         *   Has a default ctor.
+         *   Has instance variables for the closed-over values.
+         *   Provides a ctor which initializes those instance variables.
+         *   
+         * */
+
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA1801:ReviewUnusedParameters", MessageId = "frm")]
+        Type CompileBaseClass(GenContext context, Type super, Type[] interfaces, Object frm)
         {
-            TypeBuilder tb = context.ModuleBuilder.DefineType(Compiler.CompileStubPrefix + "." + ret.InternalName + RT.nextID(), TypeAttributes.Public | TypeAttributes.Abstract, super, interfaces);
+            //TypeBuilder tb = context.ModuleBuilder.DefineType(Compiler.CompileStubPrefix + "." + InternalName + RT.nextID(), TypeAttributes.Public | TypeAttributes.Abstract, super, interfaces);
+            TypeBuilder tb = context.ModuleBuilder.DefineType(Compiler.DeftypeBaseClassNamePrefix + "." + InternalName + RT.nextID(), TypeAttributes.Public | TypeAttributes.Abstract, super, interfaces);
 
             tb.DefineDefaultConstructor(MethodAttributes.Public);
+            EmitClosedOverFields(tb);
+            DefineBaseClassClosedOverConstructors(super, tb);
+            DefineBaseClassMethods(interfaces, tb);
 
-            ret.EmitClosedOverFields(tb);
+            Type t = tb.CreateType();
+            BaseClass = t;
 
+            BaseClassClosedOverCtor = GetConstructorWithArgCount(t, CtorTypes().Length);
+            if (AltCtorDrops > 0)
+                BaseClassAltCtor = GetConstructorWithArgCount(t, CtorTypes().Length - AltCtorDrops);
+
+            return t;
+        }
+
+        private void DefineBaseClassClosedOverConstructors(Type super, TypeBuilder tb)
+        {
             // ctor that takes closed-overs and does nothing
-            if (ret.CtorTypes().Length > 0)
+            if (CtorTypes().Length > 0)
             {
-                ConstructorBuilder cb = tb.DefineConstructor(MethodAttributes.Public, CallingConventions.HasThis, ret.CtorTypes());
+                ConstructorBuilder cb = tb.DefineConstructor(MethodAttributes.Public, CallingConventions.HasThis,CtorTypes());
                 CljILGen ilg = new CljILGen(cb.GetILGenerator());
                 ilg.EmitLoadArg(0);
                 ilg.Emit(OpCodes.Call, super.GetConstructor(Type.EmptyTypes));
+
+                // store closed-overs in their fields
+                int a = 0;
+
+                for (ISeq s = RT.keys(Closes); s != null; s = s.next(), a++)
+                {
+                    FieldBuilder fb = ClosedOverFields[a];
+                    bool isVolatile = IsVolatile(ClosedOverFieldsToBindingsMap[fb]);
+
+                    ilg.EmitLoadArg(0);             // gen.Emit(OpCodes.Ldarg_0);
+                    ilg.EmitLoadArg(a + 1);         // gen.Emit(OpCodes.Ldarg, a + 1);
+                    ilg.MaybeEmitVolatileOp(isVolatile);
+                    ilg.Emit(OpCodes.Stfld, fb);
+                }
                 ilg.Emit(OpCodes.Ret);
 
-
-                if (ret._altCtorDrops > 0)
+                if (AltCtorDrops > 0)
                 {
-                    Type[] ctorTypes = ret.CtorTypes();
-                    int newLen = ctorTypes.Length - ret._altCtorDrops;
+                    Type[] ctorTypes = CtorTypes();
+                    int newLen = ctorTypes.Length - AltCtorDrops;
                     if (newLen > 0)
                     {
                         Type[] altCtorTypes = new Type[newLen];
@@ -291,21 +332,25 @@ namespace clojure.lang.CljCompiler.Ast
                         ilg2.EmitLoadArg(0);
                         for (int i = 0; i < newLen; i++)
                             ilg2.EmitLoadArg(i + 1);
-                        for (int i = 0; i < ret._altCtorDrops; i++)
+                        for (int i = 0; i < AltCtorDrops; i++)
                             ilg2.EmitNull();
                         ilg2.Emit(OpCodes.Call, cb);
                         ilg2.Emit(OpCodes.Ret);
                     }
                 }
             }
+        }
 
+
+        private static void DefineBaseClassMethods(Type[] interfaces, TypeBuilder tb)
+        {
             Dictionary<string, List<MethodInfo>> impled = new Dictionary<string, List<MethodInfo>>();
 
             foreach (Type itype in interfaces)
             {
                 foreach (MethodInfo mi in itype.GetMethods())
                 {
-                    bool isExplicit = HasShadowedMethod(mi,impled);
+                    bool isExplicit = HasShadowedMethod(mi, impled);
 
                     EmitDummyMethod(tb, mi, isExplicit);
 
@@ -315,12 +360,7 @@ namespace clojure.lang.CljCompiler.Ast
 
                 }
             }
-
-            Type t = tb.CreateType();
-            //Compiler.RegisterDuplicateType(t);
-            return t;
         }
-
         private static bool HasShadowedMethod(MethodInfo mi, Dictionary<string, List<MethodInfo>> impled)
         {
             List<MethodInfo> possibles;
@@ -347,23 +387,20 @@ namespace clojure.lang.CljCompiler.Ast
 
             return true;
         }
-
  
-        static string[] InterfaceNames(IPersistentVector interfaces)
-        {
-            int icnt = interfaces.count();
-            string[] inames = icnt > 0 ? new string[icnt] : null;
-            for (int i = 0; i < icnt; i++)
-                inames[i] = SlashName((Type)interfaces.nth(i));
-            return inames;
-        }
+        //static string[] InterfaceNames(IPersistentVector interfaces)
+        //{
+        //    int icnt = interfaces.count();
+        //    string[] inames = icnt > 0 ? new string[icnt] : null;
+        //    for (int i = 0; i < icnt; i++)
+        //        inames[i] = SlashName((Type)interfaces.nth(i));
+        //    return inames;
+        //}
 
-
-        static string SlashName(Type t)
-        {
-            return t.FullName.Replace(',', '/');
-        }
-
+        //static string SlashName(Type t)
+        //{
+        //    return t.FullName.Replace(',', '/');
+        //}
 
         #endregion
 
@@ -372,11 +409,11 @@ namespace clojure.lang.CljCompiler.Ast
         static void GatherMethods(
             Type st,
             ISeq interfaces,
-            out Dictionary<IPersistentVector, List<MethodInfo>> overrides,
-            out Dictionary<IPersistentVector, List<MethodInfo>> explicits)
+            out Dictionary<IPersistentVector, IList<MethodInfo>> overrides,
+            out Dictionary<IPersistentVector, IList<MethodInfo>> explicits)
         {
-            overrides = new Dictionary<IPersistentVector, List<MethodInfo>>();
-            explicits = new Dictionary<IPersistentVector, List<MethodInfo>>();
+            overrides = new Dictionary<IPersistentVector, IList<MethodInfo>>();
+            explicits = new Dictionary<IPersistentVector, IList<MethodInfo>>();
 
             GatherMethods(st, overrides);
             for (; interfaces != null; interfaces = interfaces.next()) {
@@ -385,7 +422,7 @@ namespace clojure.lang.CljCompiler.Ast
             }
         }
 
-        static void GatherMethods(Type t, Dictionary<IPersistentVector, List<MethodInfo>> mm)
+        static void GatherMethods(Type t, Dictionary<IPersistentVector, IList<MethodInfo>> mm)
         {
             for (Type mt = t; mt != null; mt = mt.BaseType)
                 foreach (MethodInfo m in mt.GetMethods(BindingFlags.FlattenHierarchy | BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
@@ -396,7 +433,7 @@ namespace clojure.lang.CljCompiler.Ast
                     GatherMethods(it, mm);
         }
 
-        static void ConsiderMethod(MethodInfo m, Dictionary<IPersistentVector, List<MethodInfo>> mm)
+        static void ConsiderMethod(MethodInfo m, Dictionary<IPersistentVector, IList<MethodInfo>> mm)
         {
             IPersistentVector mk = MSig(m);
             if (!(mm.ContainsKey(mk)
@@ -411,9 +448,9 @@ namespace clojure.lang.CljCompiler.Ast
             return RT.vector(m.Name, RT.seq(Compiler.GetTypes(m.GetParameters())), m.ReturnType);
         }
 
-        static void AddMethod(Dictionary<IPersistentVector, List<MethodInfo>> mm, IPersistentVector sig, MethodInfo m)
+        static void AddMethod(Dictionary<IPersistentVector, IList<MethodInfo>> mm, IPersistentVector sig, MethodInfo m)
         {
-            List<MethodInfo> value;
+            IList<MethodInfo> value;
             if (!mm.TryGetValue(sig, out value))
             {
                 value = new List<MethodInfo>();
@@ -422,11 +459,11 @@ namespace clojure.lang.CljCompiler.Ast
             value.Add(m);
         }
 
-        private static void GatherInterfaceExplicits(Type type, Dictionary<IPersistentVector, List<MethodInfo>> explicits)
+        private static void GatherInterfaceExplicits(Type type, Dictionary<IPersistentVector, IList<MethodInfo>> explicits)
         {
             foreach (MethodInfo m in type.GetMethods(BindingFlags.FlattenHierarchy | BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
             {
-                List<MethodInfo> value;
+                IList<MethodInfo> value;
                 IPersistentVector mk = MSig(m);
                 if ( ! explicits.TryGetValue(mk,out value) )
                 {
@@ -465,11 +502,11 @@ namespace clojure.lang.CljCompiler.Ast
                 {
                     MethodBuilder mbg = tb.DefineMethod("getBasis", MethodAttributes.Public | MethodAttributes.Static, typeof(IPersistentVector), Type.EmptyTypes);
                     CljILGen ilg = new CljILGen(mbg.GetILGenerator());
-                    EmitValue(_hintedFields, ilg);
+                    EmitValue(HintedFields, ilg);
                     ilg.Emit(OpCodes.Ret);
                 }
 
-                if (Fields.count() > _hintedFields.count())
+                if (Fields.count() > HintedFields.count())
                 {
                     // create(IPersistentMap)
                     MethodBuilder mbc = tb.DefineMethod("create", MethodAttributes.Public | MethodAttributes.Static, tb, new Type[] { typeof(IPersistentMap) });
@@ -477,7 +514,7 @@ namespace clojure.lang.CljCompiler.Ast
 
                     LocalBuilder kwLocal = gen.DeclareLocal(typeof(Keyword));
                     List<LocalBuilder> locals = new List<LocalBuilder>();
-                    for (ISeq s = RT.seq(_hintedFields); s != null; s = s.next())
+                    for (ISeq s = RT.seq(HintedFields); s != null; s = s.next())
                     {
                         string bName = ((Symbol)s.first()).Name;
                         Type t = Compiler.TagType(Compiler.TagOf(s.first()));
@@ -509,7 +546,7 @@ namespace clojure.lang.CljCompiler.Ast
                     gen.EmitNull();
                     gen.EmitLoadArg(0);
                     gen.EmitCall(Compiler.Method_RT_seqOrElse);
-                    gen.EmitNew(_ctorInfo);
+                    gen.EmitNew(CtorInfo);
 
                     gen.Emit(OpCodes.Ret);
                 }
@@ -520,7 +557,7 @@ namespace clojure.lang.CljCompiler.Ast
         {
             HashSet<MethodInfo> implemented = new HashSet<MethodInfo>();
 
-            for (ISeq s = RT.seq(_methods); s != null; s = s.next())
+            for (ISeq s = RT.seq(Methods); s != null; s = s.next())
             {
                 NewInstanceMethod method = (NewInstanceMethod)s.first();
                 method.Emit(this, tb);
@@ -534,7 +571,7 @@ namespace clojure.lang.CljCompiler.Ast
                         EmitDummyMethod(tb, mi,true);
                 }
             
-            EmitHasArityMethod(_typeBuilder, null, false, 0);
+            EmitHasArityMethod(TypeBuilder, null, false, 0);
         }
 
         private bool NeedsDummy(MethodInfo mi, HashSet<MethodInfo> implemented)
@@ -550,7 +587,8 @@ namespace clojure.lang.CljCompiler.Ast
             CljILGen gen = new CljILGen(mb.GetILGenerator());
             gen.EmitNew(typeof(NotImplementedException), Type.EmptyTypes);
             gen.Emit(OpCodes.Throw);
-            tb.DefineMethodOverride(mb, mi);
+            if ( isExplicit )
+                tb.DefineMethodOverride(mb, mi);
         }
 
         #endregion

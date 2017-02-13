@@ -13,8 +13,8 @@
  **/
 
 using System;
-
 using System.Collections;
+using System.Collections.Generic;
 using System.Threading;
 
 namespace clojure.lang
@@ -32,7 +32,7 @@ namespace clojure.lang
     /// </remarks>
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1708:IdentifiersShouldDifferByMoreThanCase")]
     [Serializable]
-    public class PersistentArrayMap : APersistentMap, IObj, IEditableCollection
+    public class PersistentArrayMap : APersistentMap, IObj, IEditableCollection, IMapEnumerable, IMapEnumerableTyped<Object,Object>, IEnumerable, IEnumerable<IMapEntry>, IKVReduce
     {
         #region Data
 
@@ -108,9 +108,13 @@ namespace clojure.lang
         }
 
 
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "create")]
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1702:CompoundWordsShouldBeCasedCorrectly", MessageId = "AsIf"), 
+         System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "create")]
         public static PersistentArrayMap createAsIfByAssoc(Object[] init)
         {
+            if ((init.Length & 1) == 1)
+                throw new ArgumentException(String.Format("No value supplied for key: {0}", init[init.Length - 1]), "init");
+
             // ClojureJVM says: If this looks like it is doing busy-work, it is because it
             // is achieving these goals: O(n^2) run time like
             // createWithCheck(), never modify init arg, and only
@@ -314,7 +318,7 @@ namespace clojure.lang
         {
             int i = IndexOfKey(key);
             return i >= 0
-                ? new MapEntry(_array[i], _array[i + 1])
+                ? (IMapEntry)Tuple.create(_array[i], _array[i + 1])
                 : null;
         }
 
@@ -405,9 +409,9 @@ namespace clojure.lang
                     return createHT(_array).assoc(key, val);
                 newArray = new object[_array.Length + 2];
                 if (_array.Length > 0)
-                    Array.Copy(_array, 0, newArray, 2, _array.Length);
-                newArray[0] = key;
-                newArray[1] = val;
+                    Array.Copy(_array, 0, newArray, 0, _array.Length);
+                newArray[newArray.Length-2] = key;
+                newArray[newArray.Length - 1] = val;
             }
             return create(newArray);
         }
@@ -453,13 +457,8 @@ namespace clojure.lang
                 if (newlen == 0)
                     return (IPersistentMap)empty();
                 object[] newArray = new object[newlen];
-                for (int s = 0, d = 0; s < _array.Length; s += 2)
-                    if (s != i) // skip key to be removed
-                    {
-                        newArray[d] = _array[s];
-                        newArray[d + 1] = _array[s + 1];
-                        d += 2;
-                    }
+                Array.Copy(_array, 0, newArray, 0, i);
+                Array.Copy(_array,i+2,newArray,i,newlen-i);
                 return create(newArray);
             }
             else
@@ -526,7 +525,7 @@ namespace clojure.lang
             /// <returns>The first item.</returns>
             public override object first()
             {
-                return new MapEntry(_array[_i], _array[_i + 1]);
+                return Tuple.create(_array[_i], _array[_i + 1]);
             }
 
             /// <summary>
@@ -585,10 +584,10 @@ namespace clojure.lang
         {
             #region Data
 
-            int _len;
+            volatile int _len;
             readonly object[] _array;
             
-            [NonSerialized] Thread _owner;
+            [NonSerialized] volatile Thread _owner;
 
             #endregion
 
@@ -699,6 +698,50 @@ namespace clojure.lang
                     return ((IDeref)init).deref();
             }
             return init;
+        }
+
+        #endregion
+
+        #region IMapEnumerable, IMapEnumerableTyped, IEnumerable ...
+
+        public IEnumerator keyEnumerator()
+        {
+            return tkeyEnumerator();
+        }
+
+        public IEnumerator valEnumerator()
+        {
+            return tvalEnumerator();
+        }
+
+        public IEnumerator<object> tkeyEnumerator()
+        {
+            for (int i = 0; i < _array.Length; i += 2)
+                yield return _array[i];
+        }
+
+        public IEnumerator<object> tvalEnumerator()
+        {
+            for (int i = 0; i < _array.Length; i += 2)
+                yield return _array[i + 1];
+        }
+
+
+        public override IEnumerator<KeyValuePair<object, object>> GetEnumerator()
+        {
+            for (int i = 0; i < _array.Length; i += 2)
+                yield return new KeyValuePair<object, object>(_array[i], _array[i + 1]);
+        }
+
+        IEnumerator IEnumerable.GetEnumerator()
+        {
+            return ((IEnumerable<IMapEntry>)this).GetEnumerator();
+        }
+
+        IEnumerator<IMapEntry> IEnumerable<IMapEntry>.GetEnumerator()
+        {
+            for (int i = 0; i < _array.Length; i += 2)
+                yield return (IMapEntry) Tuple.create(_array[i], _array[i + 1]);
         }
 
         #endregion

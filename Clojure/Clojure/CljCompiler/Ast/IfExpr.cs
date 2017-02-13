@@ -17,14 +17,23 @@ using System.Reflection.Emit;
 
 namespace clojure.lang.CljCompiler.Ast
 {
-    class IfExpr : Expr, MaybePrimitiveExpr
+    public class IfExpr : Expr, MaybePrimitiveExpr
     {
+        public ParserContext ParsedContext { get; set; }
+        
         #region Data
 
         readonly IPersistentMap _sourceSpan;
+        public IPersistentMap SourceSpan { get { return _sourceSpan; } } 
+
         readonly Expr _testExpr;
+        public Expr TestExpr { get { return _testExpr; } }
+
         readonly Expr _thenExpr;
+        public Expr ThenExpr { get { return _thenExpr; } }
+        
         readonly Expr _elseExpr;
+        public Expr ElseExpr { get { return _elseExpr; } }
 
         #endregion
 
@@ -73,6 +82,7 @@ namespace clojure.lang.CljCompiler.Ast
 
         public sealed class Parser : IParser
         {
+            [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1725:ParameterNamesShouldMatchBaseDeclaration", MessageId = "1#")]
             public Expr Parse(ParserContext pcon, object frm)
             {
                 ISeq form = (ISeq)frm;

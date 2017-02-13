@@ -177,6 +177,13 @@ namespace clojure.lang
                 method = GetMatchingMethodAux(targetType, args, methods, methodName, false);
                 hasMethods = methods.Count > 0;
             }
+            else
+            {
+                Type targetType = typeof(object);
+                IList<MethodBase> methods = GetMethods(targetType, methodName, typeArgs, args.Count, false);
+                method = GetMatchingMethodAux(targetType, args, methods, methodName, false);
+                hasMethods = methods.Count > 0;
+            }
 
             MaybeReflectionWarn(spanMap, (target.HasClrType ? target.ClrType : null), false, hasMethods, method, methodName, args);
             return (MethodInfo)method;
@@ -203,8 +210,6 @@ namespace clojure.lang
                 infos = GetInterfaceMethods(targetType, methodName, typeArgs, arity);
             else
             {
-                MethodInfo[] all = targetType.GetMethods();
-                MethodInfo[] allFlag = targetType.GetMethods(flags);
                 IEnumerable<MethodInfo> einfos
                     = targetType.GetMethods(flags).Where(info => info.Name == methodName && info.GetParameters().Length == arity);
                 infos = new List<MethodBase>();
@@ -251,6 +256,7 @@ namespace clojure.lang
         /// <param name="args"></param>
         /// <param name="ctorCount"></param>
         /// <returns></returns>
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA1801:ReviewUnusedParameters", MessageId = "spanMap")]
         internal static ConstructorInfo GetMatchingConstructor(IPersistentMap spanMap, Type targetType, IList<HostArg> args, out int ctorCount)
         {
             IList<MethodBase> methods = Reflector.GetConstructors(targetType, args.Count);
@@ -287,7 +293,7 @@ namespace clojure.lang
             foreach (HostArg ha in args)
             {
                 Expr e = ha.ArgExpr;
-                Type argType = e.HasClrType ? (e.ClrType ?? typeof(object)) : typeof(Object);
+                Type argType = e.HasClrType ? (e.ClrType ?? typeof(object)) : typeof(object);
 
                 Type t;
 
@@ -368,7 +374,7 @@ namespace clojure.lang
             {
                 if (targetType == null)
                 {
-                    RT.errPrintWriter().WriteLine(string.Format("Reflection warning, {0}:{1}:{2} - call to method {4} can't be resolved (target class is unknown).",
+                    RT.errPrintWriter().WriteLine(string.Format("Reflection warning, {0}:{1}:{2} - call to {3}method {4} can't be resolved (target class is unknown).",
                         Compiler.SourcePathVar.deref(), Compiler.GetLineFromSpanMap(spanMap), Compiler.GetColumnFromSpanMap(spanMap), (isStatic ? "static " : ""), methodName));
                 }
                 else if (hasMethods)
@@ -379,7 +385,7 @@ namespace clojure.lang
                 else
                 {
                     RT.errPrintWriter().WriteLine(string.Format("Reflection warning, {0}:{1}:{2} - call to {3}method {4} on {5} can't be resolved (no such method).",
-                        Compiler.SourcePathVar.deref(), Compiler.GetLineFromSpanMap(spanMap), Compiler.GetColumnFromSpanMap(spanMap), (isStatic ? "static " : ""), methodName, targetType.FullName, GetTypeStringForArgs(args)));
+                        Compiler.SourcePathVar.deref(), Compiler.GetLineFromSpanMap(spanMap), Compiler.GetColumnFromSpanMap(spanMap), (isStatic ? "static " : ""), methodName, targetType.FullName));
                 }
             }
         }
@@ -393,7 +399,7 @@ namespace clojure.lang
                 Expr e = ha.ArgExpr;
                 if (i > 0)
                     sb.Append(", ");
-                sb.Append(e.HasClrType ? (e.ClrType != null ? e.ClrType.FullName : "nil") : "unknown");
+                sb.Append((e.HasClrType && e.ClrType != null) ?  e.ClrType.FullName : "unknown");
                 i++;
             }
             return sb.ToString();
@@ -401,23 +407,26 @@ namespace clojure.lang
 
         public static MethodInfo GetArityZeroMethod(Type t, string name, bool getStatics)
         {
-            BindingFlags flags = BindingFlags.Public | BindingFlags.FlattenHierarchy | BindingFlags.InvokeMethod;
-            if (getStatics)
-                flags |= BindingFlags.Static;
-            else
-                flags |= BindingFlags.Instance;
+            //BindingFlags flags = BindingFlags.Public | BindingFlags.FlattenHierarchy | BindingFlags.InvokeMethod;
+            //if (getStatics)
+            //    flags |= BindingFlags.Static;
+            //else
+            //    flags |= BindingFlags.Instance;
 
-            //MethodInfo[] all = t.GetMethods();
+            ////MethodInfo[] all = t.GetMethods();
 
-            IEnumerable<MethodInfo> einfo = t.GetMethods(flags).Where(mi => mi.Name == name && mi.GetParameters().Length == 0);
-            List<MethodInfo> infos = new List<MethodInfo>(einfo);
+            //IEnumerable<MethodInfo> einfo = t.GetMethods(flags).Where(mi => mi.Name == name && mi.GetParameters().Length == 0);
+            //List<MethodInfo> infos = new List<MethodInfo>(einfo);
+
+            IList<MethodBase> infos = GetMethods(t, name, null, 0, getStatics);
+
             if (infos.Count() == 1)
-                return infos[0];
+                return (MethodInfo)infos[0];
             else if (getStatics && infos.Count > 1)
             {
                 // static method with no arguments, multiple implementations.  Find closest to leaf in hierarchy.
                 Type d = infos[0].DeclaringType;
-                MethodInfo m = infos[0];
+                MethodBase m = infos[0];
                 for (int i = 1; i < infos.Count; i++)
                 {
                     Type d1 = infos[i].DeclaringType;
@@ -427,7 +436,7 @@ namespace clojure.lang
                         m = infos[i];
                     }
                 }
-                return m;
+                return (MethodInfo)m;
             }
             else
                 return null;
@@ -450,6 +459,7 @@ namespace clojure.lang
             return CallMethod(methodName, typeArgs, true, t, null, args);
         }
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA1801:ReviewUnusedParameters", MessageId = "typeArgs")]
         public static object CallMethod(string methodName, IList<Type> typeArgs, bool isStatic, Type t, object target, params object[] args)
         {
             Expression targetExpr = isStatic ? Expression.Constant(t, typeof(Type)) : Expression.Constant(target);
@@ -662,7 +672,7 @@ namespace clojure.lang
             return AreAssignable(paramType, argType);
         }
 
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "prep")]
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA1801:ReviewUnusedParameters", MessageId = "t"), System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "prep")]
         public static Object prepRet(Type t, Object x)
         {
             //if (!t.IsPrimitive)

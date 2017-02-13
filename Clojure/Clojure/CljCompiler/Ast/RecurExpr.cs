@@ -18,14 +18,23 @@ using System.Reflection.Emit;
 
 namespace clojure.lang.CljCompiler.Ast
 {
-    class RecurExpr : Expr, MaybePrimitiveExpr
+    public class RecurExpr : Expr, MaybePrimitiveExpr
     {
+        public ParserContext ParsedContext { get; set; }
+        
         #region Data
 
         readonly IPersistentVector _args;
+        public IPersistentVector Args { get { return _args; } }
+
         readonly IPersistentVector _loopLocals;
+        public IPersistentVector LoopLocals { get { return _args; } }
+
         readonly string _source;
+        public string Source { get { return _source; } }
+
         readonly IPersistentMap _spanMap;
+        public IPersistentMap SpanMap { get { return _spanMap; } }
 
         #endregion
 
@@ -59,6 +68,7 @@ namespace clojure.lang.CljCompiler.Ast
 
         public sealed class Parser : IParser
         {
+            [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1725:ParameterNamesShouldMatchBaseDeclaration", MessageId = "1#")]
             public Expr Parse(ParserContext pcon, object frm)
             {
                 string source = (string)Compiler.SourceVar.deref();
@@ -165,7 +175,8 @@ namespace clojure.lang.CljCompiler.Ast
                         else if (primt == typeof(int) && pt == typeof(long))
                         {
                             mpeArg.EmitUnboxed(RHC.Expression, objx, ilg);
-                            ilg.EmitCall(Compiler.Method_RT_intCast_long);
+                            //ilg.EmitCall(Compiler.Method_RT_intCast_long);
+                            ilg.Emit(OpCodes.Conv_I4);
 
                         }
                         else if (primt == typeof(float) && pt == typeof(double))
@@ -194,8 +205,12 @@ namespace clojure.lang.CljCompiler.Ast
                 LocalBinding lb = (LocalBinding)_loopLocals.nth(i);
                 //Type primt = lb.PrimitiveType;
                 if (lb.IsArg)
+                {
                     //ilg.Emit(OpCodes.Starg, lb.Index - (objx.IsStatic ? 0 : 1));
+                    if (lb.DeclaredType != typeof(Object) && !lb.DeclaredType.IsPrimitive)
+                        ilg.Emit(OpCodes.Castclass, lb.DeclaredType);
                     ilg.EmitStoreArg(lb.Index);
+                }
                 else
                 {
                     ilg.Emit(OpCodes.Stloc, lb.LocalVar);
@@ -220,8 +235,8 @@ namespace clojure.lang.CljCompiler.Ast
         #endregion
     }
 
-    class Recur
+    public static class Recur
     {
-        public static Type RecurType = typeof(Recur);
+        public static readonly Type RecurType = typeof(Recur);
     }
 }

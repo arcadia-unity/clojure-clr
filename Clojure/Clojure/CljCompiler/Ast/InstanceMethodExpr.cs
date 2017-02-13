@@ -18,18 +18,19 @@ using System.Collections.Generic;
 
 namespace clojure.lang.CljCompiler.Ast
 {
-    class InstanceMethodExpr : MethodExpr
+    public class InstanceMethodExpr : MethodExpr
     {
         #region Data
 
         readonly Expr _target;
+        public Expr Target { get { return _target; } }
 
         #endregion
 
         #region Ctors
 
-        public InstanceMethodExpr(string source, IPersistentMap spanMap, Symbol tag, Expr target, string methodName, List<Type> typeArgs, List<HostArg> args)
-            : base(source,spanMap,tag,methodName,typeArgs,args)
+        public InstanceMethodExpr(string source, IPersistentMap spanMap, Symbol tag, Expr target, string methodName, IList<Type> typeArgs, IList<HostArg> args, bool tailPosition)
+            : base(source,spanMap,tag,methodName,typeArgs,args,tailPosition)
         {
             _target = target;
 
@@ -76,7 +77,7 @@ namespace clojure.lang.CljCompiler.Ast
 
         public override Type ClrType
         {
-            get { return _tag != null ? HostExpr.TagToType(_tag) : _method.ReturnType; }
+            get { return Compiler.RetType((_tag != null ? HostExpr.TagToType(_tag) : null), (_method != null) ? _method.ReturnType : null); }
         }
 
         #endregion

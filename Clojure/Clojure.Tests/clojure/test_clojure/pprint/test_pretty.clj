@@ -61,6 +61,8 @@ Usage: *hello*
     (cl-format nil "~<{~;LIST ~@_~W ~@_~W ~@_~W~;}~:>" '(first second third)))
   "{LIST\n first\n second\n third}")
 
+(defprotocol Foo (foo-you [this]))
+
 (simple-tests pprint-test
   (binding [*print-pprint-dispatch* simple-dispatch]
     (write '(defn foo [x y] 
@@ -103,7 +105,11 @@ Usage: *hello*
        '(add-to-buffer this (make-buffer-blob (str (char c)) nil))
        :stream nil)))
   "(add-to-buffer\n  this\n  (make-buffer-blob (str (char c)) nil))"
-  )
+ 
+  (binding [*print-pprint-dispatch* simple-dispatch]
+    (write (var Foo) :stream nil))
+  "#'clojure.test-clojure.pprint/Foo"
+)
 
 
 
@@ -172,6 +178,7 @@ Usage: *hello*
     (pprint-simple-code-list writer alis)))")
 
 (code-block ns-macro-test
+  "(ns foobarbaz)"
   "(ns slam.hound.stitch
   (:use [slam.hound.prettify :only [prettify]]))"
   
@@ -368,3 +375,11 @@ It is implemented with a number of custom enlive templates.\"
       (pprint (range 50))
       (pprint (range 50)))
     (is (= @flush-count-atom 0) "pprint flushes on newline")))
+
+(deftest test-pprint-calendar
+  (let [calendar (.ToDateTime (System.Globalization.GregorianCalendar.)  2014 3 29 14 0 0 0)       ;;; (doto (java.util.GregorianCalendar. 2014 3 29 14 0 0)
+                                                                                                   ;;;     (.setTimeZone (java.util.TimeZone/getTimeZone "GMT")))
+        calendar-str (with-out-str (pprint calendar))]
+    (is (= (str/split-lines calendar-str)
+	       ["#inst \"2014-03-29T14:00:00.000-00:00\"" ""])                                            ;;;  "#inst \"2014-04-29T14:00:00.000+00:00\""  Added ""
+        "calendar object pretty prints")))

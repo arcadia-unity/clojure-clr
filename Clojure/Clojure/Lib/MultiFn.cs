@@ -22,6 +22,7 @@ namespace clojure.lang
     /// Represents a multifunction.
     /// </summary>
     /// <remarks>See the Clojure documentation for more details.</remarks>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "Fn")]
     public class MultiFn : AFn, IDisposable
     {
         #region Data
@@ -82,7 +83,7 @@ namespace clojure.lang
         /// </summary>
         volatile object _cachedHierarchy;
 
-        ReaderWriterLockSlim _rw;
+        ReaderWriterLock _rw;
         bool _disposed = false;
 
         //static readonly Var _assoc = RT.var("clojure.core", "assoc");
@@ -102,6 +103,7 @@ namespace clojure.lang
         /// <param name="dispatchFn">The dispatch function.</param>
         /// <param name="defaultDispatchVal">The default dispatch value.</param>
         /// <param name="hierarchy">The hierarchy for this multifunction</param>
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "Fn")]
         public MultiFn(string name, IFn dispatchFn, object defaultDispatchVal, IRef hierarchy)
         {
             _name = name;
@@ -112,7 +114,7 @@ namespace clojure.lang
             _preferTable = PersistentHashMap.EMPTY;
             _hierarchy = hierarchy;
             _cachedHierarchy = null;
-            _rw = new ReaderWriterLockSlim(LockRecursionPolicy.SupportsRecursion);
+            _rw = new ReaderWriterLock();
         }
 
         #endregion
@@ -128,7 +130,7 @@ namespace clojure.lang
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "add")]
         public MultiFn addMethod(object dispatchVal, IFn method)
         {
-            _rw.EnterWriteLock();
+            _rw.AcquireWriterLock(-1);
             try
             {
                 _methodTable = MethodTable.assoc(dispatchVal, method);
@@ -137,7 +139,7 @@ namespace clojure.lang
             }
             finally
             {
-                _rw.ExitWriteLock();
+                _rw.ReleaseWriterLock();
             }
         }
 
@@ -150,7 +152,7 @@ namespace clojure.lang
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "remove")]
         public MultiFn removeMethod(object dispatchVal)
         {
-            _rw.EnterWriteLock();
+            _rw.AcquireWriterLock(-1);
             try
             {
                 _methodTable = MethodTable.without(dispatchVal);
@@ -159,7 +161,7 @@ namespace clojure.lang
             }
             finally
             {
-                _rw.ExitWriteLock();
+                _rw.ReleaseWriterLock();
             }
         }
 
@@ -172,7 +174,7 @@ namespace clojure.lang
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "prefer")]
         public MultiFn preferMethod(object dispatchValX, object dispatchValY)
         {
-            _rw.EnterWriteLock();
+            _rw.AcquireWriterLock(-1);
             try
             {
                 if (Prefers(dispatchValY, dispatchValX))
@@ -185,7 +187,7 @@ namespace clojure.lang
             }
             finally
             {
-                _rw.ExitWriteLock();
+                _rw.ReleaseWriterLock();
             }
         }
 
@@ -242,7 +244,7 @@ namespace clojure.lang
         /// <returns></returns>
         private IPersistentMap ResetCache()
         {
-            _rw.EnterWriteLock();
+            _rw.AcquireWriterLock(-1);
             try
             {
                 _methodCache = MethodTable;
@@ -251,7 +253,7 @@ namespace clojure.lang
             }
             finally
             {
-                _rw.ExitWriteLock();
+                _rw.ReleaseWriterLock();
             }
         }
 
@@ -289,7 +291,7 @@ namespace clojure.lang
         /// <returns>The mest method.</returns>
         private IFn FindAndCacheBestMethod(object dispatchVal)
         {
-            _rw.EnterWriteLock();
+            _rw.AcquireWriterLock(-1);
             object bestValue;
             IPersistentMap mt = _methodTable;
             IPersistentMap pt = _preferTable;
@@ -320,11 +322,11 @@ namespace clojure.lang
             }
             finally
             {
-                _rw.ExitWriteLock();
+                _rw.ReleaseWriterLock();
             }
 
             // ensure basis has stayed stable throughout, else redo
-            _rw.EnterWriteLock();
+            _rw.AcquireWriterLock(-1);
             try
             {
                 if (mt == _methodTable
@@ -344,7 +346,7 @@ namespace clojure.lang
             }
             finally
             {
-                _rw.ExitWriteLock();
+                _rw.ReleaseWriterLock();
             }
         }
 
@@ -376,7 +378,7 @@ namespace clojure.lang
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "reset")]
         public MultiFn reset()
         {
-            _rw.EnterWriteLock();
+            _rw.AcquireWriterLock(-1);
             try
             {
                 _methodTable = _methodCache = _preferTable = PersistentHashMap.EMPTY;
@@ -385,7 +387,7 @@ namespace clojure.lang
             }
             finally
             {
-                _rw.ExitWriteLock();
+                _rw.ReleaseWriterLock();
             }
         }
 
@@ -786,11 +788,6 @@ namespace clojure.lang
         {
             if (!_disposed)
             {
-                if (disposing)
-                {
-                    ((IDisposable)_rw).Dispose();
-                }
-
                 _disposed = true;
             }
         }

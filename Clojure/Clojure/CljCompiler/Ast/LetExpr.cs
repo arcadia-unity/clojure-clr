@@ -18,13 +18,20 @@ using System.Reflection.Emit;
 
 namespace clojure.lang.CljCompiler.Ast
 {
-    class LetExpr : Expr, MaybePrimitiveExpr
+    public class LetExpr : Expr, MaybePrimitiveExpr
     {
+        public ParserContext ParsedContext { get; set; }
+        
         #region Data
 
         readonly IPersistentVector _bindingInits;
+        public IPersistentVector BindingInits { get { return _bindingInits; } }
+
         readonly Expr _body;
+        public Expr Body { get { return _body; } }
+        
         readonly bool _isLoop;
+        public bool IsLoop { get { return _isLoop; } }
 
         #endregion
 
@@ -57,6 +64,7 @@ namespace clojure.lang.CljCompiler.Ast
 
         public sealed class Parser : IParser
         {
+            [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1725:ParameterNamesShouldMatchBaseDeclaration", MessageId = "1#")]
             public Expr Parse(ParserContext pcon, object frm)
             {
                 ISeq form = (ISeq)frm;
@@ -97,9 +105,7 @@ namespace clojure.lang.CljCompiler.Ast
                     IPersistentMap dynamicBindings = RT.map(
                         Compiler.LocalEnvVar, Compiler.LocalEnvVar.deref(),
                         Compiler.NextLocalNumVar, Compiler.NextLocalNumVar.deref());
-                    method.Locals = backupMethodLocals;
-                    method.IndexLocals = backupMethodIndexLocals;
-
+                    method.SetLocals(backupMethodLocals, backupMethodIndexLocals);
 
                     if (isLoop)
                         dynamicBindings = dynamicBindings.assoc(Compiler.LoopLocalsVar, null);
@@ -128,7 +134,7 @@ namespace clojure.lang.CljCompiler.Ast
                                     HostArg ha = new HostArg(HostArg.ParameterType.Standard, init, null);
                                     List<HostArg> has = new List<HostArg>(1);
                                     has.Add(ha);
-                                    init = new StaticMethodExpr("", PersistentArrayMap.EMPTY, null, typeof(RT), "box", null, has);
+                                    init = new StaticMethodExpr("", PersistentArrayMap.EMPTY, null, typeof(RT), "box", null, has, false);
                                     if (RT.booleanCast(RT.WarnOnReflectionVar.deref()))
                                         RT.errPrintWriter().WriteLine("Auto-boxing loop arg: " + sym);
                                 }
@@ -136,18 +142,18 @@ namespace clojure.lang.CljCompiler.Ast
                                 {
                                     List<HostArg> args = new List<HostArg>();
                                     args.Add(new HostArg(HostArg.ParameterType.Standard, init, null));
-                                    init = new StaticMethodExpr("", null, null, typeof(RT), "longCast", null, args);
+                                    init = new StaticMethodExpr("", null, null, typeof(RT), "longCast", null, args, false);
                                 }
                                 else if (Compiler.MaybePrimitiveType(init) == typeof(float))
                                 {
                                     List<HostArg> args = new List<HostArg>();
                                     args.Add(new HostArg(HostArg.ParameterType.Standard, init, null));
-                                    init = new StaticMethodExpr("", null, null, typeof(RT), "doubleCast", null, args);
+                                    init = new StaticMethodExpr("", null, null, typeof(RT), "doubleCast", null, args, false);
                                 }
                             }
 
                             // Sequential enhancement of env (like Lisp let*)
-                            LocalBinding b = Compiler.RegisterLocal(sym, Compiler.TagOf(sym), init, false);
+                            LocalBinding b = Compiler.RegisterLocal(sym, Compiler.TagOf(sym), init, typeof(Object), false);
                             BindingInit bi = new BindingInit(b, init);
                             bindingInits = bindingInits.cons(bi);
 

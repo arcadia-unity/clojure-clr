@@ -24,6 +24,8 @@ using System;
 using System.Diagnostics.SymbolStore;
 using clojure.lang.Runtime;
 using AstUtils = Microsoft.Scripting.Ast.Utils;
+using System.Collections.Generic;
+using System.Collections;
 
 namespace clojure.lang.CljCompiler.Ast
 {
@@ -75,10 +77,52 @@ namespace clojure.lang.CljCompiler.Ast
 
         #region C-tors & factory methods
 
+        private static Dictionary<Assembly, bool> InternalAssemblies = new Dictionary<Assembly, bool>();
+
+        private static void AddInternalAssembly(Assembly a)
+        {
+            lock (((ICollection)InternalAssemblies).SyncRoot)
+            {
+                InternalAssemblies[a] = true;
+            }
+        }
+
+        public static bool IsInternalAssembly(Assembly a)
+        {
+            lock (((ICollection)InternalAssemblies).SyncRoot)
+            {
+                return InternalAssemblies.ContainsKey(a);
+            }
+        }
+
         public static GenContext CreateWithInternalAssembly(string assyName, bool createDynInitHelper)
         {
-            return CreateGenContext(assyName, assyName, ".dll", null, createDynInitHelper);
+            GenContext ctx = CreateGenContext(assyName, assyName, ".dll", null, createDynInitHelper);
+            AddInternalAssembly(ctx.AssemblyBuilder);
+
+#if CLR2
+            // Massive kludge for .net 3.5 -- the RuntimeAssemblyBuilder yielded by reflection is not the same as AssemblyBuilder.
+            Type t = CreateDummyType(ctx.ModuleBuilder);
+            MethodInfo m = t.GetMethod("test");
+            if (m != null && m.DeclaringType.Assembly != ctx.AssemblyBuilder)
+                AddInternalAssembly(m.DeclaringType.Assembly);
+#endif
+
+            return ctx;
         }
+
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Performance", "CA1811:AvoidUncalledPrivateCode")]
+        private static Type CreateDummyType(ModuleBuilder mb)
+        {
+            TypeBuilder tb = mb.DefineType("_._._.AAA.DUMMY",TypeAttributes.Public);
+            MethodBuilder mbb = tb.DefineMethod("test",MethodAttributes.Public,typeof(void),Type.EmptyTypes);
+            var ilg = mbb.GetILGenerator();
+            ilg.Emit(OpCodes.Ret);
+            tb.CreateType();
+            return tb;
+        }
+
+
 
         public static GenContext CreateWithExternalAssembly(string sourceName, AssemblyName assemblyName, string extension, bool createDynInitHelper)
         {
@@ -111,13 +155,8 @@ namespace clojure.lang.CljCompiler.Ast
 
         private GenContext(string directory, AssemblyName aname, string extension, bool createDynInitHelper, string sourceName)
         {
-            // TODO: Make this settable from a *debug* flag
-#if DEBUG
-            _isDebuggable = true;
-#else
-            _isDebuggable = false;
-#endif
-
+            _isDebuggable = (bool)Compiler.DebugVar.deref();
+            
             _assyGen = new AssemblyGen(aname, directory, extension, _isDebuggable);
             if ( createDynInitHelper )
                 _dynInitHelper = new DynInitHelper(_assyGen, GenerateName());

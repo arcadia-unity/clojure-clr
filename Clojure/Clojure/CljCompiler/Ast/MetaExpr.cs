@@ -18,12 +18,17 @@ using System.Reflection.Emit;
 
 namespace clojure.lang.CljCompiler.Ast
 {
-    class MetaExpr : Expr
+    public class MetaExpr : Expr
     {
+        public ParserContext ParsedContext { get; set; }
+        
         #region Data
 
         readonly Expr _expr;
+        public Expr Expr { get { return _expr; } }
+
         readonly Expr _meta;
+        public Expr Meta { get { return _meta; } }
 
         #endregion
 

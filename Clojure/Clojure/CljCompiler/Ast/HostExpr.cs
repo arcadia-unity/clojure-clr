@@ -32,6 +32,7 @@ namespace clojure.lang.CljCompiler.Ast
 
         public sealed class Parser : IParser
         {
+            [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Maintainability", "CA1502:AvoidExcessiveComplexity")]
             public Expr Parse(ParserContext pcon, object form)
             {
                 ISeq sform = (ISeq)form;
@@ -51,6 +52,7 @@ namespace clojure.lang.CljCompiler.Ast
                 IPersistentMap spanMap = (IPersistentMap)Compiler.SourceSpanVar.deref();  // Compiler.GetSourceSpanMap(form);
 
                 Symbol tag = Compiler.TagOf(sform);
+                bool tailPosition = Compiler.InTailCall(pcon.Rhc);
 
                 // determine static or instance
                 // static target must be symbol, either fully.qualified.Typename or Typename that has been imported
@@ -91,7 +93,7 @@ namespace clojure.lang.CljCompiler.Ast
                         if ((pinfo = Reflector.GetProperty(t, fieldName, true)) != null)
                             return new StaticPropertyExpr(source, spanMap, tag, t, fieldName, pinfo);
                         if (!isPropName && Reflector.GetArityZeroMethod(t, fieldName, true) != null)
-                            return new StaticMethodExpr(source, spanMap, tag, t, fieldName, null, new List<HostArg>());
+                            return new StaticMethodExpr(source, spanMap, tag, t, fieldName, null, new List<HostArg>(), tailPosition);
                         throw new MissingMemberException(t.Name, fieldName);
                     }
                     else if (instance != null && instance.HasClrType && instance.ClrType != null)
@@ -102,7 +104,7 @@ namespace clojure.lang.CljCompiler.Ast
                         if ((pinfo = Reflector.GetProperty(instanceType, fieldName, false)) != null)
                             return new InstancePropertyExpr(source, spanMap, tag, instance, fieldName, pinfo);
                         if (!isPropName && Reflector.GetArityZeroMethod(instanceType, fieldName, false) != null)
-                            return new InstanceMethodExpr(source, spanMap, tag, instance, fieldName, null, new List<HostArg>());
+                            return new InstanceMethodExpr(source, spanMap, tag, instance, fieldName, null, new List<HostArg>(), tailPosition);
                         if (pcon.IsAssignContext)
                             return new InstanceFieldExpr(source, spanMap, tag, instance, fieldName, null); // same as InstancePropertyExpr when last arg is null
                         else
@@ -150,8 +152,8 @@ namespace clojure.lang.CljCompiler.Ast
                 List<HostArg> args = ParseArgs(pcon, RT.next(call));
 
                 return t != null
-                    ? (MethodExpr)(new StaticMethodExpr(source, spanMap, tag, t, methodName, typeArgs, args))
-                    : (MethodExpr)(new InstanceMethodExpr(source, spanMap, tag, instance, methodName, typeArgs, args));
+                    ? (MethodExpr)(new StaticMethodExpr(source, spanMap, tag, t, methodName, typeArgs, args, tailPosition))
+                    : (MethodExpr)(new InstanceMethodExpr(source, spanMap, tag, instance, methodName, typeArgs, args, tailPosition));
             }
         }
 
@@ -293,6 +295,8 @@ namespace clojure.lang.CljCompiler.Ast
                         object o = Compiler.CurrentNamespace.GetMapping(sym);
                         if (o is Type)
                             t = (Type)o;
+                        else if (Compiler.LocalEnvVar.deref() != null && ((IPersistentMap)Compiler.LocalEnvVar.deref()).containsKey(form))  // JVM casts to java.util.Map
+                            return null;
                         else
                         {
                             try
@@ -315,85 +319,46 @@ namespace clojure.lang.CljCompiler.Ast
             return t;
         }
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "maybe")]
+        public static Type maybeSpecialTag(Symbol sym)
+        {
+            Type t = Compiler.PrimType(sym);
+            switch (sym.Name)
+            {
+                case "objects": t = typeof(object[]); break;
+                case "ints": t = typeof(int[]); break;
+                case "longs": t = typeof(long[]); break;
+                case "floats": t = typeof(float[]); break;
+                case "doubles": t = typeof(double[]); break;
+                case "chars": t = typeof(char[]); break;
+                case "shorts": t = typeof(short[]); break;
+                case "bytes": t = typeof(byte[]); break;
+                case "booleans":
+                case "bools": t = typeof(bool[]); break;
+                case "uints": t = typeof(uint[]); break;
+                case "ushorts": t = typeof(ushort[]); break;
+                case "ulongs": t = typeof(ulong[]); break;
+                case "sbytes": t = typeof(sbyte[]); break;
+            }
+            return t;
+        }
+
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Maintainability", "CA1502:AvoidExcessiveComplexity")]
         internal static Type TagToType(object tag)
         {
-            Type t = MaybeType(tag, true);
+            Type t = null;
 
             Symbol sym = tag as Symbol;
             if (sym != null)
             {
                 if (sym.Namespace == null) // if ns-qualified, can't be classname
                 {
-                    switch (sym.Name)
-                    {
-                        case "objects": 
-                            t = typeof(object[]); break;
-                        case "ints": 
-                            t = typeof(int[]); break;
-                        case "longs": t = typeof(long[]); break;
-                        case "floats": t = typeof(float[]); break;
-                        case "doubles": t = typeof(double[]); break;
-                        case "chars": t = typeof(char[]); break;
-                        case "shorts": t = typeof(short[]); break;
-                        case "bytes": t = typeof(byte[]); break;
-                        case "booleans":
-                        case "bools": t = typeof(bool[]); break;
-                        case "uints": t = typeof(uint[]); break;
-                        case "ushorts": t = typeof(ushort[]); break;
-                        case "ulongs": t = typeof(ulong[]); break;
-                        case "sbytes": t = typeof(sbyte[]); break;
-                        case "int":
-                        case "Int32":
-                        case "System.Int32":
-                            t = typeof(int); break;
-                        case "long":
-                        case "Int64":
-                        case "System.Int64": 
-                            t = typeof(long); break;
-                        case "short":
-                        case "Int16":
-                        case "System.Int16":
-                            t = typeof(short); break;
-                        case "byte":
-                        case "Byte":
-                        case "System.Byte": 
-                            t = typeof(byte); break;
-                        case "float":
-                        case "Single":
-                        case "System.Single": 
-                            t = typeof(float); break;
-                        case "double":
-                        case "Double":
-                        case "System.Double": 
-                            t = typeof(double); break;
-                        case "char":
-                        case "Char":
-                        case "System.Char": 
-                        t = typeof(char); break;
-                        case "bool":
-                        case "boolean":
-                        case "Boolean":
-                        case "System.Boolean": 
-                            t = typeof(bool); break;
-                        case "uint":
-                        case "UInt32":
-                        case "System.UInt32": 
-                            t = typeof(uint); break;
-                        case "ulong":
-                        case "UInt64":
-                        case "System.UInt64": 
-                            t = typeof(ulong); break;
-                        case "ushort":
-                        case "UInt16":
-                        case "System.UInt16": 
-                            t = typeof(ushort); break;
-                        case "sbyte":
-                        case "SByte":
-                        case "System.SByte": 
-                            t = typeof(sbyte); break;
-                    }
+                    t = maybeSpecialTag(sym);
                 }
             }
+           
+            if ( t == null )
+                t = MaybeType(tag, true);
 
             if (t != null)
                 return t;
@@ -405,6 +370,7 @@ namespace clojure.lang.CljCompiler.Ast
 
         #region Code generation
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA1801:ReviewUnusedParameters", MessageId = "objx")]
         internal static void EmitBoxReturn(ObjExpr objx, CljILGen ilg, Type returnType)
 
         {
@@ -414,11 +380,13 @@ namespace clojure.lang.CljCompiler.Ast
                 ilg.Emit(OpCodes.Box, returnType);
         }
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA1801:ReviewUnusedParameters", MessageId = "objx")]
         internal static void EmitUnboxArg(ObjExpr objx, CljILGen ilg, Type paramType)
         {
             EmitUnboxArg(ilg, paramType);
         }
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Maintainability", "CA1502:AvoidExcessiveComplexity")]
         internal static void EmitUnboxArg(CljILGen ilg, Type paramType)
         {
             if (paramType.IsPrimitive)

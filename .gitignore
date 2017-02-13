@@ -163,7 +163,7 @@ $RECYCLE.BIN/
 #
 ######
 
-lib/
+####lib/
 
 # Emacs artifacts
 *~
@@ -172,3 +172,4 @@ lib/
 
 # Mono
 *.userprefs
+/dist/

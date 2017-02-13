@@ -13,18 +13,13 @@
  **/
 
 using System;
+using System.Collections;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using Microsoft.Scripting.Utils;
 using System.ComponentModel;
 using System.Reflection;
 using Microsoft.Scripting.Actions.Calls;
-using System.Collections;
 using Microsoft.Scripting.Runtime;
-using System.Runtime.CompilerServices;
-using Microsoft.Scripting.Actions;
-using Microsoft.Scripting;
+using Microsoft.Scripting.Utils;
 
 namespace clojure.lang.Runtime
 {
@@ -32,6 +27,7 @@ namespace clojure.lang.Runtime
     {
         #region Conversion entry points
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Maintainability", "CA1502:AvoidExcessiveComplexity")]
         internal static bool CanConvertFrom(Type fromType, Type toType, NarrowingLevel level)
         {
             ContractUtils.RequiresNotNull(fromType, "fromType");
@@ -201,6 +197,7 @@ namespace clojure.lang.Runtime
 
         #region Numeric conversion calculations
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Maintainability", "CA1502:AvoidExcessiveComplexity")]
         internal static bool WideningIntegerConversion(Type fromType, Type toType)
         {
             TypeCode fromTC = Type.GetTypeCode(fromType);
@@ -388,6 +385,7 @@ namespace clojure.lang.Runtime
 
 
         // Modified from IPy code
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Maintainability", "CA1502:AvoidExcessiveComplexity")]
         private static bool HasImplicitNumericConversion(Type fromType, Type toType)
         {
             if (fromType.IsEnum)

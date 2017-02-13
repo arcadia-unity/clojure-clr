@@ -24,7 +24,7 @@ namespace clojure.lang
     /// </summary>
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1708:IdentifiersShouldDifferByMoreThanCase")]
     [Serializable]
-    public class PersistentVector: APersistentVector, IObj, IEditableCollection, IEnumerable, IReduce
+    public class PersistentVector: APersistentVector, IObj, IEditableCollection, IEnumerable, IReduce, IKVReduce
     {
         #region Node class
 
@@ -95,7 +95,45 @@ namespace clojure.lang
 
         #endregion
 
+        #region Transient vector conj
+
+        private sealed class TransientVectorConjer : AFn
+        {
+            public override object invoke(object coll, object val)
+            {
+                return ((ITransientVector)coll).conj(val);
+            }
+
+            public override object invoke(object coll)
+            {
+                return coll;
+            }
+        }
+
+        static IFn _transientVectorConj = new TransientVectorConjer();
+
+        #endregion
+
         #region C-tors and factory methods
+
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "adopt")]
+        public static PersistentVector adopt(Object[] items)
+        {
+            return new PersistentVector(items.Length, 5, EmptyNode, items);
+        }
+
+        /// <summary>
+        /// Create a <see cref="PersistentVector">PersistentVector</see> from an <see cref="ISeq">IReduceInit</see>.
+        /// </summary>
+        /// <param name="items"></param>
+        /// <returns></returns>
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "create")]
+        static public PersistentVector create(IReduceInit items)
+        {
+            TransientVector ret = (TransientVector)EMPTY.asTransient();
+            items.reduce(_transientVectorConj, ret);
+            return (PersistentVector)ret.persistent();
+        }
 
         /// <summary>
         /// Create a <see cref="PersistentVector">PersistentVector</see> from an <see cref="ISeq">ISeq</see>.
@@ -105,10 +143,33 @@ namespace clojure.lang
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "create")]
         static public PersistentVector create(ISeq items)
         {
-            ITransientCollection ret = EMPTY.asTransient();
-            for (; items != null; items = items.next())
-                ret = ret.conj(items.first());
-            return (PersistentVector)ret.persistent();
+            Object[] arr = new Object[32];
+            int i = 0;
+            for (; items != null && i < 32; items = items.next())
+                arr[i++] = items.first();
+
+            if (items != null)
+            {
+                // >32, construct with array directly
+                PersistentVector start = new PersistentVector(32, 5, EmptyNode, arr);
+                TransientVector ret = (TransientVector)start.asTransient();
+                for (; items != null; items = items.next())
+                    ret = (TransientVector)ret.conj(items.first());
+                return (PersistentVector)ret.persistent();
+            }
+            else if (i == 32)
+            {
+                // exactly 32, skip copy
+                return new PersistentVector(32, 5, EmptyNode, arr);
+            }
+            else
+            {
+                // <32, copy to minimum array and construct
+                Object[] arr2 = new Object[i];
+                Array.Copy(arr, 0, arr2, 0, i);
+
+                return new PersistentVector(i, 5, EmptyNode, arr2);
+            }
         }
 
         /// <summary>
@@ -126,19 +187,34 @@ namespace clojure.lang
         }
 
         /// <summary>
-        /// Create a <see cref="PersistentVector">PersistentVector</see> from an ICollection.
+        /// Create a <see cref="PersistentVector">PersistentVector</see> from an IEnumerable.
         /// </summary>
         /// <param name="items"></param>
         /// <returns></returns>
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "create")]
-        static public PersistentVector create1(ICollection items)
+        static public PersistentVector create1(IEnumerable items)
         {
+            // optimize common case
+            IList ilist = items as IList;
+            if (ilist != null)
+            {
+                int size = ilist.Count;
+                if (size <= 32)
+                {
+                    Object[] arr = new Object[size];
+                    ilist.CopyTo(arr, 0);
+
+                    return new PersistentVector(size, 5, PersistentVector.EmptyNode, arr);
+                }
+            }
+
             ITransientCollection ret = EMPTY.asTransient();
             foreach (object item in items)
+            {
                 ret = ret.conj(item);
+            }
             return (PersistentVector)ret.persistent();
         }
-
 
 
         /// <summary>
@@ -197,17 +273,6 @@ namespace clojure.lang
         #endregion
 
         #region IPersistentVector members
-
-        /// <summary>
-        /// Gets the number of items in the vector.
-        /// </summary>
-        /// <returns>The number of items.</returns>
-        /// <remarks>Not sure why you wouldn't use <c>count()</c> intead.</remarks>
-        public override int length()
-        {
-            return count();
-        }
-
 
         int tailoff()
         {
@@ -615,10 +680,10 @@ namespace clojure.lang
         {
             #region Data
 
-            int _cnt;
-	        int _shift;
-	        Node _root;
-            object[] _tail;
+            volatile int _cnt;
+            volatile int _shift;
+            volatile Node _root;
+            volatile object[] _tail;
 
             #endregion
 
@@ -947,16 +1012,16 @@ namespace clojure.lang
 
         public object reduce(IFn f)
         {
-            throw new InvalidOperationException();
-        }
-
-        public object reduce(IFn f, object init)
-        {
+            Object init;
+            if (_cnt > 0)
+                init = ArrayFor(0)[0];
+            else
+                return f.invoke();
             int step = 0;
             for (int i = 0; i < _cnt; i += step)
             {
                 Object[] array = ArrayFor(i);
-                for (int j = 0; j < array.Length; ++j)
+                for (int j = (i == 0) ? 1 : 0; j < array.Length; ++j)
                 {
                     init = f.invoke(init, array[j]);
                     if (RT.isReduced(init))
@@ -965,6 +1030,23 @@ namespace clojure.lang
                 step = array.Length;
             }
             return init;
+        }
+
+        public object reduce(IFn f, object start)
+        {
+            int step = 0;
+            for (int i = 0; i < _cnt; i += step)
+            {
+                Object[] array = ArrayFor(i);
+                for (int j = 0; j < array.Length; ++j)
+                {
+                    start = f.invoke(start, array[j]);
+                    if (RT.isReduced(start))
+                        return ((IDeref)start).deref();
+                }
+                step = array.Length;
+            }
+            return start;
         }
 
 

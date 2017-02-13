@@ -17,22 +17,20 @@ using System;
 
 namespace clojure.lang.CljCompiler.Ast
 {
-    abstract class UntypedExpr : Expr
+    public abstract class UntypedExpr : Expr
     {
-        #region Expr Members
+        public ParserContext ParsedContext { get; set; }
         
-        public bool HasClrType
-        {
-            get { return false;  }
-        }
+        #region Expr Members
+
+        public bool HasClrType { get { return false; } }
 
         public Type ClrType
         {
-            get { throw new ArgumentException("Has no CLR type"); }
+            get { throw new InvalidOperationException("Has no CLR type"); }
         }
 
         public virtual bool HasNormalExit() { return true; }
-
 
         public abstract object Eval();
         public abstract void Emit(RHC rhc, ObjExpr objx, CljILGen ilg);

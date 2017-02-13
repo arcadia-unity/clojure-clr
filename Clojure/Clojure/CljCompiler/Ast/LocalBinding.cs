@@ -22,81 +22,52 @@ namespace clojure.lang.CljCompiler.Ast
         #region Data
 
         private readonly Symbol _sym;
-        public Symbol Symbol
-        {
-            get { return _sym; }
-        }
+        public Symbol Symbol { get { return _sym; } }
 
-        private  Symbol _tag;
-        public Symbol Tag
-        {
-            get { return _tag; }
-            set { _tag = value; }
-        }
+        public Symbol Tag { get; set; }
 
-        private Expr _init;
-        public Expr Init
-        {
-            get { return _init; }
-            set { _init = value; }
-        }
+        public Expr Init { get; set; }
 
         private readonly String _name;
-        public String Name
-        {
-            get { return _name; }
-        }
+        public String Name { get { return _name; } }
 
-        private readonly int _index;
-        public int Index
-        {
-            get { return _index; }
-        }
-
+        public int Index { get; set;}
+    
         public LocalBuilder LocalVar { get; set; }
 
         readonly bool _isArg;
-        public bool IsArg
-        {
-            get { return _isArg; }
-        }
+        public bool IsArg { get { return _isArg; } }
 
         readonly bool _isByRef;
-
-        public bool IsByRef
-        {
-            get { return _isByRef; }
-        }
+        public bool IsByRef { get { return _isByRef; } }
 
         readonly bool _isThis;
-
         public bool IsThis { get { return _isThis; } }
-    
-        bool _recurMismatch = false;
 
-        public bool RecurMismatch
-        {
-            get { return _recurMismatch; }
-            set { _recurMismatch = value; }
-        }
+        public bool RecurMismatch { get; set; }
+
+        readonly Type _declaredType;
+        public Type DeclaredType { get { return _declaredType; } }
 
         #endregion
 
         #region C-tors
 
-        public LocalBinding(int index, Symbol sym, Symbol tag, Expr init, bool isThis, bool isArg, bool isByRef)
+        public LocalBinding(int index, Symbol sym, Symbol tag, Expr init, Type declaredType, bool isThis, bool isArg, bool isByRef)
         {
-            if (Compiler.MaybePrimitiveType(init) != null && tag != null)
-                throw new InvalidOperationException("Can't type hint a local with a primitive initializer");
+            // if (Compiler.MaybePrimitiveType(init) != null && tag != null)
+            //     throw new InvalidOperationException("Can't type hint a local with a primitive initializer");
 
-            _index = index;
+            Index = index;
             _sym = sym;
-            _tag = tag;
-            _init = init;
+            Tag = tag;
+            Init = init;
             _name = Compiler.munge(sym.Name);
             _isThis = isThis;
             _isArg = isArg;
             _isByRef = isByRef;
+            _declaredType = declaredType;
+            RecurMismatch = false;
         }
 
         #endregion
@@ -107,13 +78,13 @@ namespace clojure.lang.CljCompiler.Ast
         {
             get
             {
-                if (_init != null
+                if (Init != null
                     && Init.HasClrType
-                    && Util.IsPrimitive(_init.ClrType)
-                    && !(_init is MaybePrimitiveExpr))
+                    && Util.IsPrimitive(Init.ClrType)
+                    && !(Init is MaybePrimitiveExpr))
                     return false;
 
-                return _tag != null || (_init != null && _init.HasClrType);
+                return Tag != null || (Init != null && Init.HasClrType);
             }
         }
 
@@ -121,15 +92,15 @@ namespace clojure.lang.CljCompiler.Ast
         {
             get
             {
-                return _tag != null
-                    ? HostExpr.TagToType(_tag)
-                    : _init.ClrType;
+                return Tag != null
+                    ? HostExpr.TagToType(Tag)
+                    : Init.ClrType;
             }
         }
 
         public Type PrimitiveType
         {
-            get { return Compiler.MaybePrimitiveType(_init); }
+            get { return Compiler.MaybePrimitiveType(Init); }
         }
 
         #endregion

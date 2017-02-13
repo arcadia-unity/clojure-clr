@@ -98,10 +98,8 @@ namespace clojure.lang
         /// Provides a function to create a list from a sequence of arguments. (Internal use only.)
         /// </summary>
         /// <remarks>Internal use only.  Used to interface with core.clj.</remarks>
-        sealed class PLCreator : RestFn
+        public sealed class PLCreator : RestFn
         {
-            IPersistentMap _meta;
-
             public override int getRequiredArity()
             {
                 return 0;
@@ -119,7 +117,7 @@ namespace clojure.lang
                 {
                     object[] argsarray = (object[])ias.ToArray();
                     IPersistentList ret = EMPTY;
-                    for (int i = argsarray.Length - 1; i >= 0; i--)
+                    for (int i = argsarray.Length - 1; i >= ias.index(); i--)
                         ret = (IPersistentList)ret.cons(argsarray[i]);
                     return ret;
                 }
@@ -130,16 +128,23 @@ namespace clojure.lang
                 return create(list);
             }
 
-            public override IObj withMeta(IPersistentMap meta)
+            [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "invoke")]
+            static public object invokeStatic(ISeq args)
             {
-                PLCreator copy = (PLCreator)MemberwiseClone();
-                copy._meta = meta;
-                return copy;
-            }
+                IArraySeq ias = args as IArraySeq;
+                if (ias != null)
+                {
+                    object[] argsarray = (object[])ias.ToArray();
+                    IPersistentList ret = EMPTY;
+                    for (int i = argsarray.Length - 1; i >= 0; i--)
+                        ret = (IPersistentList)ret.cons(argsarray[i]);
+                    return ret;
+                }
 
-            public override IPersistentMap meta()
-            {
-                return _meta;
+                List<object> list = new List<object>();
+                for (ISeq s = RT.seq(args); s != null; s = s.next())
+                    list.Add(s.first());
+                return create(list);
             }
         }
 
@@ -274,11 +279,13 @@ namespace clojure.lang
         public object reduce(IFn f, object start)
         {
             object ret = f.invoke(start, first());
-            for (ISeq s = next(); s != null; s = s.next()) { 
-                ret = f.invoke(ret, s.first());
+            for (ISeq s = next(); s != null; s = s.next()) {
                 if (RT.isReduced(ret))
-                    return ((IDeref)ret).deref();
+                    return ((IDeref)ret).deref(); 
+                ret = f.invoke(ret, s.first());
             }
+            if (RT.isReduced(ret))
+                return ((IDeref)ret).deref();
             return ret;
         }
 
@@ -339,6 +346,11 @@ namespace clojure.lang
             public override bool Equals(object obj)
             {
                 return (obj is Sequential || obj is IList) && RT.seq(obj) == null;
+            }
+
+            public override string ToString()
+            {
+                return "()";
             }
 
             #endregion

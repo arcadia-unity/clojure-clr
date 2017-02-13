@@ -17,30 +17,23 @@ using System.Reflection.Emit;
 
 namespace clojure.lang.CljCompiler.Ast
 {
-    class TryExpr : Expr
+    public class TryExpr : Expr
     {
+        public ParserContext ParsedContext { get; set; }
+        
         #region Nested classes
 
         public sealed class CatchClause
         {
             readonly Type _type;
-            public Type Type
-            {
-              get { return _type; }  
-            } 
+            [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1721:PropertyNamesShouldNotMatchGetMethods")]
+            public Type Type { get { return _type; } }
 
             readonly LocalBinding _lb;
-            internal LocalBinding Lb
-            {
-              get { return _lb; }  
-            } 
+            internal LocalBinding Lb { get { return _lb; } }
 
             readonly Expr _handler;
-            internal Expr Handler
-            {
-              get { return _handler; }  
-            } 
-
+            internal Expr Handler { get { return _handler; } }
 
             public CatchClause(Type type, LocalBinding lb, Expr handler)
             {
@@ -55,15 +48,19 @@ namespace clojure.lang.CljCompiler.Ast
         #region Data
 
         readonly Expr _tryExpr;
+        public Expr TryExp { get { return _tryExpr; } }
+
         readonly Expr _finallyExpr;
+        public Expr FinallyExpr { get { return _finallyExpr; } }
+
         readonly IPersistentVector _catchExprs;
-        //readonly int _retLocal;
-        //readonly int _finallyLocal;
+        public IPersistentVector CatchExprs { get { return _catchExprs; } }
 
         #endregion
 
         #region Ctors
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA1801:ReviewUnusedParameters", MessageId = "finallyLocal"), System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA1801:ReviewUnusedParameters", MessageId = "retLocal")]
         public TryExpr(Expr tryExpr, IPersistentVector catchExprs, Expr finallyExpr, int retLocal, int finallyLocal)
         {
             _tryExpr = tryExpr;
@@ -93,6 +90,7 @@ namespace clojure.lang.CljCompiler.Ast
 
         public sealed class Parser : IParser
         {
+            [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1725:ParameterNamesShouldMatchBaseDeclaration", MessageId = "1#")]
             public Expr Parse(ParserContext pcon, object frm)
             {
                 ISeq form = (ISeq)frm;
@@ -132,7 +130,7 @@ namespace clojure.lang.CljCompiler.Ast
                         {
                             try
                             {
-                                Var.pushThreadBindings(RT.map(Compiler.NoRecurVar, true));
+                                Var.pushThreadBindings(RT.map(Compiler.NoRecurVar, true, Compiler.InTryBlockVar, true));
                                 bodyExpr = new BodyExpr.Parser().Parse(pcon, RT.seq(body));
                             }
                             finally
@@ -161,7 +159,7 @@ namespace clojure.lang.CljCompiler.Ast
                                 Var.pushThreadBindings(dynamicBindings);
                                 LocalBinding lb = Compiler.RegisterLocal(sym,
                                     (Symbol)(RT.second(f) is Symbol ? RT.second(f) : null),
-                                    null,false);
+                                    null, typeof(Object), false);
                                 Expr handler = (new BodyExpr.Parser()).Parse(recursePcon, RT.next(RT.next(RT.next(f))));
                                 catches = catches.cons(new CatchClause(t, lb, handler)); ;
                             }
@@ -191,6 +189,8 @@ namespace clojure.lang.CljCompiler.Ast
 
                 if (bodyExpr == null)
                 {
+                    // this codepath is hit when there is neither catch nor finally, e.g., (try (expr))
+                    // return a body expr directly
                     try
                     {
                         Var.pushThreadBindings(RT.map(Compiler.NoRecurVar, true));
@@ -200,6 +200,7 @@ namespace clojure.lang.CljCompiler.Ast
                     {
                         Var.popThreadBindings();
                     }
+                    return bodyExpr;
                 }
                 return new TryExpr(bodyExpr, catches, finallyExpr, retLocal, finallyLocal);
               }
@@ -242,7 +243,7 @@ namespace clojure.lang.CljCompiler.Ast
                 clause.Lb.LocalVar = ilg.DeclareLocal(clause.Type);
                 ilg.Emit(OpCodes.Stloc, clause.Lb.LocalVar);
                 clause.Handler.Emit(rhc, objx, ilg);
-                if (rhc != RHC.Statement)
+                if (clause.Handler.HasNormalExit() && rhc != RHC.Statement)
                     ilg.Emit(OpCodes.Stloc, retLocal);
             }
 

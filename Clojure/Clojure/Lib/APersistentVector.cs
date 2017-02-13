@@ -24,7 +24,7 @@ namespace clojure.lang
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Design", "CA1036:OverrideMethodsOnComparableTypes")]
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1708:IdentifiersShouldDifferByMoreThanCase")]
     [Serializable]
-    public abstract class APersistentVector: AFn, IPersistentVector, IList, IComparable, IList<Object>, IComparable<Object>, IHashEq
+    public abstract class APersistentVector: AFn, IPersistentVector, IList, IMapEntry, IComparable, IList<Object>, IComparable<Object>, IHashEq
     {
         #region Data
 
@@ -61,6 +61,8 @@ namespace clojure.lang
         /// </returns>
         public override bool Equals(object obj)
         {
+            if (this == obj)
+                return true;
             return doEquals(this, obj);
         }
 
@@ -78,6 +80,21 @@ namespace clojure.lang
             if (v == obj)
                 return true;
 
+            IPersistentVector ipv = obj as IPersistentVector;
+
+            if (ipv != null)
+            {
+                if (ipv.count() != v.count())
+                    return false;
+
+                for (int i = 0; i < v.count(); i++)
+                {
+                    if (!Util.equals(v.nth(i), ipv.nth(i)))
+                        return false;
+                }
+                return true;
+            }
+
             IList ilist = obj as IList;
 
             if (ilist != null)
@@ -88,21 +105,6 @@ namespace clojure.lang
                 for (int i = 0; i < v.count(); i++)
                 {
                     if (!Util.equals(v.nth(i), ilist[i]))
-                        return false;
-                }
-                return true;
-            }
-
-            IPersistentVector ipv = obj as IPersistentVector;
-
-            if (ipv != null)
-            {
-                if (ipv.count() != v.count())   // THis test in the JVM code can't be right:  || ma.GetHashCode() != v.GetHashCode())
-                    return false;
-
-                for (int i = 0; i < v.count(); i++)
-                {
-                    if (!Util.equals(v.nth(i), ipv.nth(i)))
                         return false;
                 }
                 return true;
@@ -123,7 +125,6 @@ namespace clojure.lang
 
             return true;
         }
-
 
 
         /// <summary>
@@ -189,8 +190,10 @@ namespace clojure.lang
         /// </summary>
         /// <param name="o">The object to compare.</param>
         /// <returns><c>true</c> if the object is equivalent; <c>false</c> otherwise.</returns>
-        public bool equiv(object o)
+        public virtual bool equiv(object o)
         {
+            if (this == o)
+                return true;
             return doEquiv(this, o);
         }
 
@@ -198,36 +201,49 @@ namespace clojure.lang
 
         static bool doEquiv(IPersistentVector v, object obj)
         {
-            if (obj is IList || obj is IPersistentVector)
+            IPersistentVector ipv = obj as IPersistentVector;
+
+            if (ipv != null)
             {
-                ICollection ma = (ICollection)obj;
-                if (ma.Count != v.count())
+                if (ipv.count() != v.count())
                     return false;
-                IEnumerator ima = ma.GetEnumerator();
-                foreach (object ov in ((IList)v))
+
+                for (int i = 0; i < v.count(); i++)
                 {
-                    ima.MoveNext();
-                    if (!Util.equiv(ov, ima.Current))
+                    if (!Util.equiv(v.nth(i), ipv.nth(i)))
                         return false;
                 }
                 return true;
             }
-            else
+
+            IList ilist = obj as IList;
+
+            if (ilist != null)
             {
-                if (!(obj is Sequential))
+                if (ilist.Count != v.count())   // THis test in the JVM code can't be right:  || ma.GetHashCode() != v.GetHashCode())
                     return false;
 
-                ISeq ms = RT.seq(obj);
-
-
-                for (int i = 0; i < v.count(); i++, ms = ms.next())
+                for (int i = 0; i < v.count(); i++)
                 {
-                    if (ms == null || !Util.equiv(v.nth(i), ms.first()))
+                    if (!Util.equiv(v.nth(i), ilist[i]))
                         return false;
                 }
-                if (ms != null)
+                return true;
+            }
+
+            if (!(obj is Sequential))
+                return false;
+
+            ISeq ms = RT.seq(obj);
+
+            for (int i = 0; i < v.count(); i++, ms = ms.next())
+            {
+                if (ms == null || !Util.equiv(v.nth(i), ms.first()))
                     return false;
             }
+            if (ms != null)
+                return false;
+
             return true;
 
         }
@@ -252,7 +268,15 @@ namespace clojure.lang
 
         #region IPersistentVector Members
 
-        abstract public int length();
+        /// <summary>
+        /// Gets the number of items in the vector.
+        /// </summary>
+        /// <returns>The number of items.</returns>
+        public virtual int length()
+        {
+            return count();
+        }
+
         abstract public object nth(int i);
         abstract public IPersistentVector assocN(int i, object val);
         abstract public IPersistentVector cons(object o);
@@ -292,7 +316,7 @@ namespace clojure.lang
             {
                 int i = Util.ConvertToInt(key);
                 if (i >= 0 && i < count())
-                    return new MapEntry(key, nth(i));
+                    return (IMapEntry) Tuple.create(key, nth(i));
             }
             return null;
         }
@@ -523,6 +547,24 @@ namespace clojure.lang
 
         #endregion
 
+        #region IMapEntry methods
+
+        public virtual object key()
+        {
+            if (count() == 2)
+                return nth(0);
+            throw new InvalidOperationException();
+        }
+
+        public virtual object val()
+        {
+            if (count() == 2)
+                return nth(1);
+            throw new InvalidOperationException();
+        }
+
+        #endregion
+
         #region IComparable Members
 
         public int CompareTo(object other)
@@ -559,11 +601,15 @@ namespace clojure.lang
         {
             if (_hasheq == -1)
             {
-                //int hash = 1;
-                //foreach (object o in this)
-                //    hash = 31 * hash + Util.hasheq(o);
-                //_hasheq = hash;
-                _hasheq = Murmur3.HashOrdered(this);
+                int n;
+                int hash = 1;
+
+                for (n = 0; n < count(); ++n)
+                {
+                    hash = 31 * hash + Util.hasheq(nth(n));
+                }
+
+                _hasheq = Murmur3.MixCollHash(hash, n);
             }
             return _hasheq;
         }
@@ -588,6 +634,17 @@ namespace clojure.lang
 
         #endregion
 
+        #region Helpers
+
+        public Object[] ToArray()
+        {
+            Object[] ret = new Object[count()];
+            for (int i = 0; i < count(); i++)
+                ret[i] = nth(i);
+            return ret;
+        }
+
+        #endregion
 
         /// <summary>
         /// Internal class providing <see cref="ISeq">ISeq</see> functionality for <see cref="APersistentVector">APersistentVector</see>.
@@ -732,11 +789,13 @@ namespace clojure.lang
             public object reduce(IFn f, object start)
             {
                 object ret = f.invoke(start, _v.nth(_i));
-                for (int x = _i + 1; x < _v.count(); x++) { 
-                    ret = f.invoke(ret, _v.nth(x));
+                for (int x = _i + 1; x < _v.count(); x++) {
                     if (RT.isReduced(ret))
-                        return ((IDeref)ret).deref();
+                        return ((IDeref)ret).deref(); 
+                    ret = f.invoke(ret, _v.nth(x));
                 }
+                if (RT.isReduced(ret))
+                    return ((IDeref)ret).deref(); 
                 return ret;
             }
 
@@ -1107,7 +1166,6 @@ namespace clojure.lang
 
             #endregion
         }
-
     }
 }
 

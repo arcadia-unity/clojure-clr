@@ -23,12 +23,12 @@ namespace clojure.lang
     /// </summary>
     /// <remarks>
     /// <para>>Note that instances of this class are constant values
-    /// i.e., add/remove etc return new values.</para
+    /// i.e., add/remove etc return new values.</para>
     /// <para>See Okasaki, Kahrs, Larsen et al</para>
     /// </remarks>
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1708:IdentifiersShouldDifferByMoreThanCase")]
     [Serializable]
-    public class PersistentTreeMap : APersistentMap, IObj, Reversible, Sorted, IEnumerable<IMapEntry>, IDictionary
+    public class PersistentTreeMap : APersistentMap, IObj, Reversible, Sorted, IEnumerable<IMapEntry>, IDictionary, IKVReduce
     {
         #region Data
 
@@ -86,7 +86,7 @@ namespace clojure.lang
             for (; items != null; items = items.next().next())
             {
                 if (items.next() == null)
-                    throw new ArgumentException(string.Format("No value supplied for key: %s", items.first()));
+                    throw new ArgumentException(string.Format("No value supplied for key: {0}", items.first()));
                 ret = ret.assoc(items.first(), items.next().first());
             }
             return (PersistentTreeMap)ret;
@@ -106,7 +106,7 @@ namespace clojure.lang
             for (; items != null; items = items.next().next())
             {
                 if (items.next() == null)
-                    throw new ArgumentException(string.Format("No value supplied for key: %s", items.first()));
+                    throw new ArgumentException(string.Format("No value supplied for key: {0}", items.first()));
                 ret = ret.assoc(items.first(), RT.second(items));
             }
             return (PersistentTreeMap)ret;
@@ -815,7 +815,7 @@ namespace clojure.lang
             }
         }
 
-        [Serializable]
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Maintainability", "CA1501:AvoidExcessiveInheritance"), Serializable]
         class BlackVal : Black
         {
             protected readonly object _val;
@@ -841,7 +841,7 @@ namespace clojure.lang
             }
         }
 
-        [Serializable]
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Maintainability", "CA1501:AvoidExcessiveInheritance"), Serializable]
         class BlackBranch : Black
         {
 
@@ -864,7 +864,7 @@ namespace clojure.lang
             }
         }
 
-        [Serializable]
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Maintainability", "CA1501:AvoidExcessiveInheritance"), Serializable]
         class BlackBranchVal : BlackBranch
         {
             readonly object _val;
@@ -934,7 +934,7 @@ namespace clojure.lang
 
         }
 
-        [Serializable]
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Maintainability", "CA1501:AvoidExcessiveInheritance"), Serializable]
         class RedVal : Red
         {
             protected readonly object _val;
@@ -959,7 +959,7 @@ namespace clojure.lang
 
         }
 
-        [Serializable]
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Maintainability", "CA1501:AvoidExcessiveInheritance"), Serializable]
         class RedBranch : Red
         {
 
@@ -1006,7 +1006,7 @@ namespace clojure.lang
 
         }
 
-        [Serializable]
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Maintainability", "CA1501:AvoidExcessiveInheritance"), Serializable]
         class RedBranchVal : RedBranch
         {
             readonly object _val;

@@ -16,12 +16,17 @@ using System;
 
 namespace clojure.lang.CljCompiler.Ast
 {
-    class AssignExpr : Expr
+    public class AssignExpr : Expr
     {
+        public ParserContext ParsedContext { get; set; }
+        
         #region Data
 
         readonly AssignableExpr _target;
+        public AssignableExpr Target { get { return _target; } }
+
         readonly Expr _val;
+        public Expr Val { get { return _val; } }
 
         #endregion
 
@@ -39,12 +44,12 @@ namespace clojure.lang.CljCompiler.Ast
 
         public bool HasClrType
         {
-            get { return _val.HasClrType; }
+            get { return Val.HasClrType; }
         }
 
         public Type ClrType
         {
-            get { return _val.ClrType; }
+            get { return Val.ClrType; }
         }
 
         #endregion
@@ -53,6 +58,7 @@ namespace clojure.lang.CljCompiler.Ast
 
         public sealed class Parser : IParser
         {
+            [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1725:ParameterNamesShouldMatchBaseDeclaration", MessageId = "1#")]
             public Expr Parse(ParserContext pcon, object frm)
             {
                 ISeq form = (ISeq)frm;

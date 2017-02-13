@@ -8,11 +8,14 @@
 
 ; Author: Frantisek Sodomka
 
-
+(assembly-load-from "clojure.test_clojure.compilation.line_number_examples.clj.dll")           ;;; DM:Added
+(assembly-load-from "clojure.test_clojure.compilation.load_ns.clj.dll")                        ;;; DM:Added
 (ns clojure.test-clojure.compilation
   (:import (clojure.lang Compiler Compiler+CompilerException))                                 ;;; Compiler$CompilerException
   (:require [clojure.test.generative :refer (defspec)]
-            [clojure.data.generators :as gen])
+		    [clojure.data.generators :as gen]
+			[clojure.test-clojure.compilation.line-number-examples :as line]
+			clojure.string)                                                                    ;;; DM:Added -- seem to have an order dependency that no longer works.
   (:use clojure.test
         [clojure.test-helper :only (should-not-reflect should-print-err-message)]))
 
@@ -30,7 +33,7 @@
 
         (string? (:doc m)) true
         (> (.Length (:doc m)) 0) true             ;;; .length
-        
+
         (string? (:file m)) true
         (> (.Length (:file m)) 0) true            ;;; .length
 
@@ -139,6 +142,11 @@
   (should-not-reflect #(.Data (clojure.test-clojure.compilation/hinted "arg")))                                   ;;; .floatValue
   (should-not-reflect #(.Count (clojure.test-clojure.compilation/hinted :many :rest :args :here))))               ;;; .size
 
+(deftest CLJ-1232-qualify-hints
+  (let [arglists (-> #'clojure.test-clojure.compilation/hinted meta :arglists)]
+    (is (= 'String (-> arglists first meta :tag)))                                                         ;;; java.lang.String
+    (is (= 'Exception (-> arglists second meta :tag)))))                                                   ;;; java.lang.Integer
+
 (defn ^String hinting-conflict ^Exception [])                                                                     ;;; ^Integer
 
 (deftest calls-use-arg-vector-hint
@@ -171,7 +179,7 @@
 (deftest primitive-return-decl
   (should-not-reflect #(loop [k 5] (recur (clojure.test-clojure.compilation/primfn))))
   (should-not-reflect #(loop [k 5.0] (recur (clojure.test-clojure.compilation/primfn 0))))
-  
+
   (should-print-err-message #"(?s).*k is not matching primitive.*"
     #(loop [k (clojure.test-clojure.compilation/primfn)] (recur :foo))))
 
@@ -256,3 +264,136 @@
 	             (try (load-string "(System.Threading.Thread. ^System.Threading.ThreadStart #())") 
 				   (catch Compiler+CompilerException e (throw (.InnerException e))))))			   	 
 			 ))
+
+(defn ^{:tag 'long} hinted-primfn [^long x] x)
+(defn unhinted-primfn [^long x] x)
+(deftest CLJ-1533-primitive-functions-lose-tag
+  (should-not-reflect #(Math/Abs (clojure.test-clojure.compilation/hinted-primfn 1)))                ;;; Math/abs
+  (should-not-reflect #(Math/Abs ^long (clojure.test-clojure.compilation/unhinted-primfn 1))))       ;;; Math/abs
+
+
+
+(defrecord Y [a])
+#clojure.test_clojure.compilation.Y[1]
+(defrecord Y [b])
+
+(binding [*compile-path* "."]              ;;; "target/test-classes"
+  (compile 'clojure.test-clojure.compilation.examples))
+
+#_(deftest test-compiler-line-numbers                   ;;; DM: TODO :: Improve Compiler source information.  And then do https://github.com/clojure/clojure/commit/715754d3f69e85b07fa56047f0d43d400ab36fce
+  (let [fails-on-line-number? (fn [expected function]
+                                 (try
+                                   (function)
+                                   nil
+                                   (catch Exception t                                                                    ;;; Throwable
+                                     (let [frames (filter #(= "line_number_examples.clj" (.GetFileName %))               ;;; .getFileName
+                                                          (.GetFrames (System.Diagnostics.StackTrace. t true)))          ;;; (.getStackTrace t))
+                                           _ (if (zero? (count frames))
+                                               (Console/WriteLine (.ToString t))                                         ;;; (.printStackTrace t)
+                                               )
+                                           actual (.GetFileLineNumber ^System.Diagnostics.StackFrame (first frames))]    ;;; .getLineNumber ^StackTraceElement
+                                       (= expected actual)))))]
+    (is (fails-on-line-number?  13 line/instance-field))
+    (is (fails-on-line-number?  19 line/instance-field-reflected))
+    (is (fails-on-line-number?  25 line/instance-field-unboxed))
+    #_(is (fails-on-line-number?  32 line/instance-field-assign))
+    (is (fails-on-line-number?  40 line/instance-field-assign-reflected))
+    #_(is (fails-on-line-number?  47 line/static-field-assign))
+    (is (fails-on-line-number?  54 line/instance-method))
+    (is (fails-on-line-number?  61 line/instance-method-reflected))
+    (is (fails-on-line-number?  68 line/instance-method-unboxed))
+    (is (fails-on-line-number?  74 line/static-method))
+    (is (fails-on-line-number?  80 line/static-method-reflected))
+    (is (fails-on-line-number?  86 line/static-method-unboxed))
+    (is (fails-on-line-number?  92 line/invoke))
+    (is (fails-on-line-number? 101 line/threading))
+    (is (fails-on-line-number? 112 line/keyword-invoke))
+    (is (fails-on-line-number? 119 line/invoke-cast))))
+
+(deftest CLJ-979
+  (is (= clojure.test_clojure.compilation.examples.X
+         (class (clojure.test-clojure.compilation.examples/->X))))
+  (is (.b (clojure.test_clojure.compilation.Y. 1)))
+  (is (= clojure.test_clojure.compilation.examples.T
+         (class (clojure.test_clojure.compilation.examples.T.))
+         (class (clojure.test-clojure.compilation.examples/->T)))))
+
+(deftest clj-1208
+  ;; clojure.test-clojure.compilation.load-ns has not been loaded
+  ;; so this would fail if the deftype didn't load it in its static
+  ;; initializer as the implementation of f requires a var from
+  ;; that namespace
+  (is (= 1 (.f (clojure.test_clojure.compilation.load_ns.x.)))))
+
+(deftest clj-1568
+  (let [compiler-fails-at?
+          (fn [row col source]
+            (try
+              (Compiler/load (System.IO.StringReader. source) "clj-1568.example" (name (gensym "clj-1568.example-")) "clj-1568.example")       ;;; java.io.StringReader, added extra arg
+              nil
+              (catch Compiler+CompilerException e                                                                                              ;;; Compiler$CompilerException
+                (re-find (re-pattern (str ".*:" row ":" col "\\)\\z"))                                                                          ;;; "^.*:" row ":" col "\\)$"
+                         (.Message e)))))]                                                                                                     ;;; .getMessage
+    (testing "with error in the initial form"
+      (are [row col source] (compiler-fails-at? row col source)
+           ;; note that the spacing of the following string is important
+           1  4 "   (.foo nil)"
+           2 18 "
+                 (/ 1 0)"))
+    (testing "with error in an non-initial form"
+      (are [row col source] (compiler-fails-at? row col source)
+           ;; note that the spacing of the following string is important
+           3 18 "(:foo {})
+
+                 (.foo nil)"
+           4 20 "(ns clj-1568.example)
+
+
+                   (/ 1 0)"))))
+
+(deftype CLJ1399 [munged-field-name])
+
+(deftest clj-1399
+  ;; throws an exception on failure
+  (is (eval `(fn [] ~(CLJ1399. 1)))))
+
+(deftest CLJ-1586-lazyseq-literals-preserve-metadata
+  (should-not-reflect (eval (list '.Substring (with-meta (concat '(identity) '("foo")) {:tag 'String}) 0))))         ;;; .substring
+
+(deftest CLJ-1456-compiler-error-on-incorrect-number-of-parameters-to-throw
+  #_(is (thrown? RuntimeException (eval '(defn foo [] (throw)))))                                                    ;;; not an error for us.  no arg signifies Rethrow
+  (is (thrown? Exception (eval '(defn foo [] (throw RuntimeException any-symbol)))))                                 ;;; RuntimeException
+  (is (thrown? Exception (eval '(defn foo [] (throw (RuntimeException.) any-symbol)))))                              ;;; RuntimeException
+  (is (var? (eval '(defn foo [] (throw (ArgumentException.)))))))                                                    ;;; IllegalArgumentException
+
+(deftest clj-1809
+  (is (eval `(fn [y#]
+               (try
+                 (finally
+                   (let [z# y#])))))))
+
+;; See CLJ-1846
+(deftest incorrect-primitive-type-hint-throws
+  ;; invalid primitive type hint
+  (is (thrown-with-msg? Compiler+CompilerException #"Cannot coerce System.Int64 to System.Int32"                     ;;; Compiler$CompilerException  "Cannot coerce long to int
+        (load-string "(defn returns-long ^long [] 1) (Math/Sign ^int (returns-long))")))                             ;;; Integer/bitCount
+  ;; correct casting instead
+  (is (= 1 (load-string "(defn returns-long ^long [] 1) (Math/Sign (int (returns-long)))"))))                        ;;; Integer/bitCount
+
+;; See CLJ-1825
+(def zf (fn rf [x] (lazy-seq (cons x (rf x)))))
+(deftest test-anon-recursive-fn
+  (is (= [0 0] (take 2 ((fn rf [x] (lazy-seq (cons x (rf x)))) 0))))
+  (is (= [0 0] (take 2 (zf 0)))))
+
+;; See CLJ-1845
+(deftest direct-linking-for-load
+  (let [called? (atom nil)
+        logger (fn [& args]
+                 (reset! called? true)
+                 nil)]
+    (with-redefs [load logger]
+      ;; doesn't actually load clojure.repl, but should
+      ;; eventually call `load` and reset called?.
+      (require 'clojure.repl :reload))
+    (is @called?)))

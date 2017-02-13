@@ -13,29 +13,50 @@
  **/
 
 using System;
+using System.Reflection;
 using System.Reflection.Emit;
 
 
 namespace clojure.lang.CljCompiler.Ast
 {
-    class DefExpr : Expr
+    public class DefExpr : Expr
     {
+        public ParserContext ParsedContext { get; set; }
+        
         #region Data
 
         readonly Var _var;
+        public Var Var { get { return _var; } }
+
         readonly Expr _init;
+        public Expr Init { get { return _init; } }
+
         readonly Expr _meta;
+        public Expr Meta { get { return _meta; } }
+
         readonly bool _initProvided;
+        public bool InitProvided { get { return _initProvided; } }
+        
         readonly bool _isDynamic;
+        public bool IsDynamic { get { return _isDynamic; } }
+        
+        readonly bool _shadowsCoreMapping;
+        public bool ShadowsCoreMapping { get { return _shadowsCoreMapping; } }
+        
         readonly string _source;
+        public string Source { get { return _source; } }
+        
         readonly int _line;
+        public int Line { get { return _line; } }
+        
         readonly int _column;
+        public int Column { get { return _column; } }
 
         #endregion
 
         #region Ctors
 
-        public DefExpr(string source, int line, int column, Var var, Expr init, Expr meta, bool initProvided, bool isDyanamic)
+        public DefExpr(string source, int line, int column, Var var, Expr init, Expr meta, bool initProvided, bool isDyanamic, bool shadowsCoreMapping)
         {
             _source = source;
             _line = line;
@@ -44,6 +65,7 @@ namespace clojure.lang.CljCompiler.Ast
             _init = init;
             _meta = meta;
             _isDynamic = isDyanamic;
+            _shadowsCoreMapping = shadowsCoreMapping;
             _initProvided = initProvided;
         }
 
@@ -95,11 +117,14 @@ namespace clojure.lang.CljCompiler.Ast
                 if (v == null)
                     throw new ParseException("Can't refer to qualified var that doesn't exist");
 
+                bool shadowsCoreMapping = false;
+
                 if (!v.Namespace.Equals(Compiler.CurrentNamespace))
                 {
                     if (sym.Namespace == null)
                     {
                         v = Compiler.CurrentNamespace.intern(sym);
+                        shadowsCoreMapping = true;
                         Compiler.RegisterVar(v);
                     }
 
@@ -159,7 +184,7 @@ namespace clojure.lang.CljCompiler.Ast
                     (string)Compiler.SourceVar.deref(),
                     Compiler.LineVarDeref(),
                     Compiler.ColumnVarDeref(),
-                    v, init, meta, initProvided,isDynamic);
+                    v, init, meta, initProvided,isDynamic,shadowsCoreMapping);
             }
         }
 
@@ -194,9 +219,35 @@ namespace clojure.lang.CljCompiler.Ast
 
         #region Code generation
 
+        static readonly FieldInfo VarNsFI = typeof(Var).GetField("_ns", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
+        static readonly FieldInfo VarSymFI = typeof(Var).GetField("_sym", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
+        static readonly MethodInfo NamespaceReferMI = typeof(Namespace).GetMethod("refer");
+
         public void Emit(RHC rhc, ObjExpr objx, CljILGen ilg)
         {
             objx.EmitVar(ilg, _var);
+
+            if ( _shadowsCoreMapping )
+            {
+                LocalBuilder locNs = ilg.DeclareLocal(typeof(Namespace));
+                GenContext.SetLocalName(locNs, "ns");
+
+                ilg.Emit(OpCodes.Dup);
+                ilg.EmitFieldGet(VarNsFI);
+                ilg.Emit(OpCodes.Stloc,locNs);
+
+                LocalBuilder locSym = ilg.DeclareLocal(typeof(Symbol));
+                GenContext.SetLocalName(locSym, "sym");
+
+                ilg.Emit(OpCodes.Dup);
+                ilg.EmitFieldGet(VarSymFI);
+                ilg.Emit(OpCodes.Stloc, locSym);
+
+                ilg.Emit(OpCodes.Ldloc, locNs);
+                ilg.Emit(OpCodes.Ldloc, locSym);
+                ilg.Emit(OpCodes.Call, NamespaceReferMI);
+            }
+
             if (_isDynamic)
             {
                 ilg.Emit(OpCodes.Call, Compiler.Method_Var_setDynamic0);
@@ -230,20 +281,20 @@ namespace clojure.lang.CljCompiler.Ast
 
         #region Misc
 
-        private static bool IncludesExplicitMetadata(MapExpr expr)
-        {
-            for (int i = 0; i < expr.KeyVals.count(); i += 2)
-            {
-                Keyword k = ((KeywordExpr)expr.KeyVals.nth(i)).Kw;
-                if ((k != RT.FileKey) &&
-                    (k != RT.DeclaredKey) &&
-                    (k != RT.SourceSpanKey) &&
-                    (k != RT.LineKey) &&
-                    (k != RT.ColumnKey))
-                    return true;
-            }
-            return false;
-        }
+        //private static bool IncludesExplicitMetadata(MapExpr expr)
+        //{
+        //    for (int i = 0; i < expr.KeyVals.count(); i += 2)
+        //    {
+        //        Keyword k = ((KeywordExpr)expr.KeyVals.nth(i)).Kw;
+        //        if ((k != RT.FileKey) &&
+        //            (k != RT.DeclaredKey) &&
+        //            (k != RT.SourceSpanKey) &&
+        //            (k != RT.LineKey) &&
+        //            (k != RT.ColumnKey))
+        //            return true;
+        //    }
+        //    return false;
+        //}
 
         #endregion
     }
