@@ -331,6 +331,7 @@ namespace clojure.lang
         internal static readonly MethodInfo Method_Reflector_SetInstanceFieldOrProperty = typeof(Reflector).GetMethod("SetInstanceFieldOrProperty");
 
         internal static readonly MethodInfo Method_RT_classForName = typeof(RT).GetMethod("classForName");
+        internal static readonly MethodInfo Method_RT_classForNameE = typeof(RT).GetMethod("classForNameE");
         internal static readonly MethodInfo Method_RT_intCast_long = typeof(RT).GetMethod("intCast", new Type[] { typeof(long) });
         internal static readonly MethodInfo Method_RT_uncheckedIntCast_long = typeof(RT).GetMethod("uncheckedIntCast", new Type[] { typeof(long) });
         internal static readonly MethodInfo Method_RT_keyword = typeof(RT).GetMethod("keyword");
