@@ -1920,7 +1920,7 @@ namespace clojure.lang
                         else if ((pinfo = Reflector.GetProperty(t, symbol.Name, true)) != null)
                             return new StaticPropertyExpr((string)SourceVar.deref(), (IPersistentMap)Compiler.SourceSpanVar.deref(), tag, t, symbol.Name, pinfo);
                     }
-                    throw new InvalidOperationException(string.Format("Unable to find static field: {0} in {1}", symbol.Name, t));
+                    throw new InvalidOperationException(string.Format("Unable to find namespace or type named {0} in {1}", symbol.Namespace, symbol.ToString()));
                 }
             }
 
