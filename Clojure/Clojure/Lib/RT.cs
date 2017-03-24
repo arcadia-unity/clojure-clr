@@ -3354,9 +3354,15 @@ namespace clojure.lang
             load(relativePath, true);
         }
 
+        private static int loadNesting = -1;
+
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly")]
         public static void load(String relativePath, Boolean failIfNotFound)
         {
+            ++loadNesting;
+            Console.WriteLine(string.Concat(Enumerable.Repeat("  ", loadNesting).ToArray()) + "--> RT.load({0})", relativePath);
+            Stopwatch sw = new Stopwatch();
+            sw.Start();
             string cljname = relativePath + ".clj";
             string assemblyname = relativePath.Replace('/', '.') + ".clj.dll";
 
@@ -3390,19 +3396,30 @@ namespace clojure.lang
                     finally
                     {
                         Var.popThreadBindings();
+                        sw.Stop();
+                        Console.WriteLine(string.Concat(Enumerable.Repeat("  ", loadNesting).ToArray()) + "<-- RT.load({0}) LoadAssembly - {1} milliseconds.", relativePath, sw.ElapsedMilliseconds);
+                        --loadNesting;
                     }
                 }
 
                 if (cljInfo != null)
                 {
-                    if (booleanCast(Compiler.CompileFilesVar.deref()))
+                    if (booleanCast(Compiler.CompileFilesVar.deref())) {
                         Compile(cljInfo, cljname);
-                    else
+                        sw.Stop();
+                        Console.WriteLine(string.Concat(Enumerable.Repeat("  ", loadNesting).ToArray()) + "<-- RT.load({0} Compile - {1} milliseconds.", relativePath, sw.ElapsedMilliseconds);
+                    } else {
                         LoadScript(cljInfo, cljname);
+                        sw.Stop();
+                        Console.WriteLine(string.Concat(Enumerable.Repeat("  ", loadNesting).ToArray()) + "<-- RT.load({0} LoadScript - {1} milliseconds.", relativePath, sw.ElapsedMilliseconds);
+                    }
+                    --loadNesting;
                     return;
                 }
             }
 
+            var swit = new Stopwatch();
+            swit.Start();
             try
             {
                 Var.pushThreadBindings(RT.map(CurrentNSVar, CurrentNSVar.deref(),
@@ -3414,17 +3431,29 @@ namespace clojure.lang
             finally
             {
                 Var.popThreadBindings();
+                swit.Stop();
+                Console.WriteLine(string.Concat(Enumerable.Repeat("  ", loadNesting).ToArray()) + "    RT.load({0} TryLoadInitType - {1} milliseconds.", relativePath, swit.ElapsedMilliseconds);
             }
 
 
+            var swer = new Stopwatch();
+            swer.Start();
             bool loaded = TryLoadFromEmbeddedResource(relativePath, assemblyname);
+            Console.WriteLine(string.Concat(Enumerable.Repeat("  ", loadNesting).ToArray()) + "    RT.load({0} TryLoadFromEmbeddedResource - {1} milliseconds.", relativePath, swer.ElapsedMilliseconds);
 
 
-            if (!loaded && failIfNotFound)
+            if (!loaded && failIfNotFound) {
+                --loadNesting;
+                sw.Stop();
+                Console.WriteLine(string.Concat(Enumerable.Repeat("  ", loadNesting).ToArray()) + "<-- RT.load({0} ERROR - {1} milliseconds.", relativePath, sw.ElapsedMilliseconds);
                 throw new FileNotFoundException(String.Format("Could not locate {0} or {1} on load path.{2}", 
                     assemblyname, 
                     cljname,
                     relativePath.Contains("_") ? " Please check that namespaces with dashes use underscores in the Clojure file name." : ""));
+            }
+            sw.Stop();
+            Console.WriteLine(string.Concat(Enumerable.Repeat("  ", loadNesting).ToArray()) + "<-- RT.load({0} - {1} milliseconds.", relativePath, sw.ElapsedMilliseconds);
+            --loadNesting;
         }
 
         private static bool TryLoadFromEmbeddedResource(string relativePath, string assemblyname)
