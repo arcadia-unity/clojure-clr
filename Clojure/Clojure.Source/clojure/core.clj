@@ -346,7 +346,7 @@
   "Throws a ClassCastException if x is not a c, else returns x."
   {:added "1.0"
    :static true}
-  [^Type c x]   ;;; changed Class to Type
+  [^Type c ^Object x]   ;;; changed Class to Type
    (if (clojure.lang.Util/identical x nil) nil (if (. c (IsInstanceOfType x)) x (throw  (InvalidCastException. (.ToString (.GetType x)))))))  ;;;  original (. c (cast x)))     
  
 (defn vector
@@ -826,9 +826,9 @@
   compares numbers and collections in a type-independent manner. x
   must implement Comparable"
   {
-   :inline (fn [x y] `(. clojure.lang.Util compare ~x ~y))
+   :inline (fn [^Object x ^Object y] `(clojure.lang.Util/compare ~x ~y))
    :added "1.0"}
-  [x y] (. clojure.lang.Util (compare x y)))
+  [^Object x ^Object y] (clojure.lang.Util/compare x y))
 
 (defmacro and
   "Evaluates exprs one at a time, from left to right. If a form
@@ -1766,7 +1766,7 @@
 (defmacro defmethod
   "Creates and installs a new method of multimethod associated with dispatch-value. "
   {:added "1.0"}
-  [multifn dispatch-val & fn-tail]
+  [^clojure.lang.MultiFn multifn dispatch-val & fn-tail]
   `(. ~(with-meta multifn {:tag 'clojure.lang.MultiFn}) addMethod ~dispatch-val (fn ~@fn-tail)))
 
 (defn remove-all-methods
@@ -1780,7 +1780,7 @@
   "Removes the method of multimethod associated	with dispatch-value."
   {:added "1.0"
    :static true}
- [multifn dispatch-val]
+ [^clojure.lang.MultiFn multifn dispatch-val]
  (. multifn removeMethod dispatch-val))
 
 (defn prefer-method
@@ -1788,7 +1788,7 @@
    when there is a conflict"  
   {:added "1.0"
    :static true}
-  [multifn dispatch-val-x dispatch-val-y]
+  [^clojure.lang.MultiFn multifn dispatch-val-x dispatch-val-y]
   (. multifn preferMethod dispatch-val-x dispatch-val-y))
 
 (defn methods
@@ -2438,7 +2438,7 @@
   {:added "1.1"
    :static true}
  ([^clojure.lang.Ref ref]
-   (.getMinHistory ref))
+   (.MinHistory ref))
  ([^clojure.lang.Ref ref n]
    (.setMinHistory ref n)))
 
@@ -2447,7 +2447,7 @@
   {:added "1.1"
    :static true}
  ([^clojure.lang.Ref ref]
-   (.getMaxHistory ref))
+   (.MaxHistory ref))
  ([^clojure.lang.Ref ref n]
    (.setMaxHistory ref n)))
 
@@ -3598,10 +3598,10 @@
        (instance? clojure.lang.BigInt x) x
        (instance? BigInteger x) (clojure.lang.BigInt/fromBigInteger x)
        (decimal? x) (bigint (.ToBigInteger ^BigDecimal x))
-	   (float? x) (bigint (BigDecimal/Create (double x)))                        ;;; (. BigDecimal valueOf (double x))
+	   (float? x) (bigint (clojure.lang.BigDecimal/Create (double x)))                        ;;; (. BigDecimal valueOf (double x))
        (ratio? x) (bigint (.BigIntegerValue ^clojure.lang.Ratio x))
-       (number? x) (clojure.lang.BigInt/valueOf (long x))   (string? x) (bigint (BigInteger/Parse ^String x))   ;; DM: Added string clause
-       :else (bigint (BigInteger. x))))
+       (number? x) (clojure.lang.BigInt/valueOf (long x))   (string? x) (bigint (clojure.lang.BigInteger/Parse ^String x))   ;; DM: Added string clause
+       :else (bigint (clojure.lang.BigInteger. x))))
 
 (defn biginteger
   "Coerce to BigInteger"
@@ -3612,10 +3612,11 @@
        (instance? BigInteger x) x
 	   (instance? clojure.lang.BigInt x) (.toBigInteger ^clojure.lang.BigInt x)
        (decimal? x) (.ToBigInteger ^BigDecimal x)                                ;;; toBigInteger
-	   (float? x) (.ToBigInteger (BigDecimal/Create (double x)))                 ;;; (.toBigInteger (. BigDecimal valueOf (double x)))
+	   (float? x) (.ToBigInteger (clojure.lang.BigDecimal/Create (double x)))                 ;;; (.toBigInteger (. BigDecimal valueOf (double x)))
        (ratio? x) (.BigIntegerValue ^clojure.lang.Ratio x)
-       (number? x) (BigInteger/Create (long x))      (string? x) (bigint (BigInteger/Parse ^String x))          ;;;(BigInteger/valueOf (long x))  DM: Added string clause
-       :else (BigInteger. x)))
+       (number? x) (clojure.lang.BigInteger/Create (long x))
+       (string? x) (bigint (clojure.lang.BigInteger/Parse ^String x))          ;;;(BigInteger/valueOf (long x))  DM: Added string clause
+       :else (clojure.lang.BigInteger. x)))
 
 (defn bigdec
   "Coerce to BigDecimal"
@@ -3624,12 +3625,13 @@
    :static true}
   [x] (cond
        (decimal? x) x
-       (float? x) (BigDecimal/Create (double x))                                          ;;; (. BigDecimal valueOf (double x))
-       (ratio? x) (/ (BigDecimal/Create (.numerator ^clojure.lang.Ratio x)) (.denominator ^clojure.lang.Ratio x))     ;;; (/ (BigDecimal. (.numerator ^clojure.lang.Ratio x)) (.denominator ^clojure.lang.Ratio x))
+       (float? x) (clojure.lang.BigDecimal/Create (double x))                                          ;;; (. BigDecimal valueOf (double x))
+       (ratio? x) (/ (clojure.lang.BigDecimal/Create (.numerator ^clojure.lang.Ratio x)) (.denominator ^clojure.lang.Ratio x))     ;;; (/ (BigDecimal. (.numerator ^clojure.lang.Ratio x)) (.denominator ^clojure.lang.Ratio x))
        (instance? clojure.lang.BigInt x) (.ToBigDecimal ^clojure.lang.BigInt x)           ;;; .ToBigDecimal
-       (instance? BigInteger x) (BigDecimal/Create ^BigInteger x)                         ;;; (BigDecimal. ^BigInteger x)
-       (number? x) (BigDecimal/Create (long x))                                           ;;; (BigDecimal/valueOf (long x))
-       :else  (BigDecimal/Create x)))                                                     ;;; (BigDecimal. x)))
+       (instance? BigInteger x) (clojure.lang.BigDecimal/Create ^BigInteger x)                         ;;; (BigDecimal. ^BigInteger x)
+       (number? x) (clojure.lang.BigDecimal/Create (long x))                                           ;;; (BigDecimal/valueOf (long x))
+       :else  (throw (InvalidCastException. (str "Cannot cast " (type x) " to BigDecimal.")))
+       ))                                                     ;;; (BigDecimal. x)))
 	   
 (def ^:dynamic ^{:private true} print-initialized false)
 
@@ -3857,13 +3859,13 @@ Note that read can execute code (controlled by *read-eval*),
 (defn aget
   "Returns the value at the index/indices. Works on Java arrays of all
   types."
-  {:inline (fn [a i] `(. clojure.lang.RT (aget ~a (int ~i))))
+  {:inline (fn [^Array a i] `(. clojure.lang.RT (aget ~a (int ~i))))
    :inline-arities #{2}
    :added "1.0"}
-  ([array idx]
-   (clojure.lang.Reflector/prepRet (.GetElementType (class array)) (. array (GetValue idx))))  ;;; was .getComponentType (. Array (get array idx)))  
-  ([array idx & idxs]
-   (apply aget (aget array idx) idxs)))
+  ([^Array array idx]
+   (clojure.lang.Reflector/prepRet (.GetElementType (class array)) (. array (GetValue (int idx)))))  ;;; was .getComponentType (. Array (get array idx)))  
+  ([^Array array idx & idxs]
+   (apply aget (aget array (int idx)) idxs)))
 
 (defn aset
   "Sets the value at the index/indices. Works on Java arrays of
@@ -3871,11 +3873,11 @@ Note that read can execute code (controlled by *read-eval*),
   {:inline (fn [a i v] `(. clojure.lang.RT (aset ~a (int ~i) ~v)))
    :inline-arities #{3}
    :added "1.0"}
-  ([array idx val]
-   (. array (SetValue val idx))  ;;; was     (. Array (set array idx val))
+  ([^Array array idx ^Object val]
+   (. array (SetValue val (int idx)))  ;;; was     (. Array (set array idx val))
    val)
-  ([array idx idx2 & idxv]
-   (apply aset (aget array idx) idx2 idxv)))
+  ([^Array array idx idx2 & idxv]
+   (apply aset (aget array (int idx)) idx2 idxv)))
 
 (defmacro
   ^{:private true}
@@ -3885,8 +3887,8 @@ Note that read can execute code (controlled by *read-eval*),
        ([array# idx# val#]
         (. clojure.lang.ArrayHelper (~method array# idx# (~coerce val#)))        ;;; Array -> ArrayHelper so we can provide the overloads below.
         val#)
-       ([array# idx# idx2# & idxv#]
-        (apply ~name (aget array# idx#) idx2# idxv#))))
+       ([^Array array# idx# idx2# & idxv#]
+        (apply ~name (aget array# (int idx#)) idx2# idxv#))))
 
 (def-aset
   ^{:doc "Sets the value at the index/indices. Works on arrays of int. Returns val."
@@ -3937,12 +3939,12 @@ Note that read can execute code (controlled by *read-eval*),
   {:added "1.0"
    :static true}
   ([^Type type len]                                                     ;;; ^Class
-   (. Array (CreateInstance type (int len))))                            ;;; newInstance
+   (Array/CreateInstance type (int len)))                            ;;; newInstance
   ([^Type type dim & more-dims]                                        ;;; ^Class
-   (let [ a  (. Array (CreateInstance Array (int dim)))]       ;;;    [dims (cons dim more-dims)
+   (let [^Array a (System.Array/CreateInstance (.MakeArrayType type) (int dim))]       ;;;    [dims (cons dim more-dims)
                                                                ;;;     ^"[I" dimarray (make-array (. Integer TYPE)  (count dims))]
       (dotimes [i dim]                                         ;;;       (dotimes [i (alength dimarray)]
-          (aset a i (apply make-array type more-dims)))        ;;;   (aset-int dimarray i (nth dims i)))
+          (aset a (int i) (apply make-array type more-dims)))        ;;;   (aset-int dimarray i (nth dims i)))
       a)))                                                     ;;; (. Array (newInstance type dimarray)))))
 
 (defn to-array-2d
@@ -3953,10 +3955,10 @@ Note that read can execute code (controlled by *read-eval*),
    :added "1.0"
    :static true}
   [^System.Collections.ICollection coll]                                              ;;; ^java.util.Collection
-    (let [ret  (make-array Object (.Count coll))]      ;;; NEED BETTER TYPING HERE (make-array (. Class (forName "[Ljava.lang.Object;")) (. coll (size)))]
+    (let [^Array ret  (make-array Object (.Count coll))]      ;;; NEED BETTER TYPING HERE (make-array (. Class (forName "[Ljava.lang.Object;")) (. coll (size)))]
       (loop [i 0 xs (seq coll)]
         (when xs
-          (aset ret i (to-array (first xs)))
+          (aset ret (int i) (to-array (first xs)))
           (recur (inc i) (next xs))))
       ret))
 
@@ -4138,8 +4140,8 @@ Note that read can execute code (controlled by *read-eval*),
   [ns]
   (let [ns (the-ns ns)]
     (filter-key val (fn [ v] (and (instance? clojure.lang.Var v)    ;;;  removed the tag on v:  ^clojure.lang.Var
-                                 (= ns (.ns v))
-                                 (.isPublic v)))
+                                 (= ns (.ns ^clojure.lang.Var v))
+                                 (.isPublic ^clojure.lang.Var v)))
                 (ns-map ns))))
 
 (defn ns-imports
@@ -4693,9 +4695,9 @@ Note that read can execute code (controlled by *read-eval*),
   "Create an instance of ExceptionInfo, a RuntimeException subclass
    that carries a map of additional data."
   {:added "1.4"}
-  ([msg map]
+  ([^String msg ^clojure.lang.IPersistentMap map]
      (ExceptionInfo. msg map))
-  ([msg map cause]
+  ([^String msg ^clojure.lang.IPersistentMap map ^Exception cause]
      (ExceptionInfo. msg map cause)))
 
 (defn ex-data
@@ -4975,7 +4977,7 @@ Note that read can execute code (controlled by *read-eval*),
   {:private true}
   [^clojure.lang.Sorted sc test key]
   (fn [e]
-    (test (.. sc comparator (compare (. sc entryKey e) key)) 0)))
+    (test (.. sc comparator (Compare (. sc entryKey e) key)) 0)))
 
 (defn subseq
   "sc must be a sorted collection, test(s) one of <, <=, > or

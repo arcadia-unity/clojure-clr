@@ -18,7 +18,7 @@
 (defn root-cause
   "Returns the last 'cause' Throwable in a chain of Throwables."
   {:added "1.1"} 
-  [tr]
+  [^System.Exception tr]
   (if-let [cause (.InnerException tr)]                              ;;; .getCause
     (recur cause)
     tr))
@@ -38,7 +38,7 @@
 (defn print-throwable1
   "Prints the class and message of a Throwable."
   {:added "1.1"} 
-  [tr]
+  [^System.Exception tr]
   (print (str (.FullName (class tr)) ": " (.Message tr))))              ;;;  use when we have printf:  (printf "%s: %s" (.getName (class tr)) (.getMessage tr)))
 
 (defn print-stack-trace
@@ -66,8 +66,8 @@
 (defn print-cause-trace
   "Like print-stack-trace but prints chained exceptions (causes)."
   {:added "1.1"} 
-  ([tr] (print-cause-trace tr nil))
-  ([tr n]
+  ([^System.Exception tr] (print-cause-trace tr nil))
+  ([^System.Exception tr n]
      (print-stack-trace tr n)
      (when-let [cause (.InnerException tr)]                              ;; (.getTrace tr)]
        (print "Caused by: " )

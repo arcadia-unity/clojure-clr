@@ -146,7 +146,7 @@ Example: (source-fn 'filter)"
         (with-open [ ^System.IO.TextReader rdr (.OpenText info)]                    ;;; [rdr (LineNumberReader. (InputStreamReader. strm))]
           (dotimes [_ (dec (:line (meta v)))] (.ReadLine rdr))                      ;;; .readLine
           (let [text (StringBuilder.)
-                pbr (proxy [clojure.lang.PushbackTextReader] [rdr]                  ;;; [PushbackReader] [rdr]
+                pbr (proxy [clojure.lang.PushbackTextReader] [^System.IO.TextReader rdr]                  ;;; [PushbackReader] [rdr]
                       (Read [] (let [i (proxy-super Read)]                          ;;; read read
                                  (.Append text (char i))                            ;;; .append
                                  i)))

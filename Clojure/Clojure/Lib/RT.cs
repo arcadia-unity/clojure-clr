@@ -777,6 +777,17 @@ namespace clojure.lang
             throw new ArgumentException("Don't know how to create ISeq from: " + coll.GetType().FullName);
         }
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "can")]
+        static public bool canSeq(object coll)
+        {
+            return coll == null
+                || coll is ISeq
+                || coll is Seqable
+                || coll.GetType().IsArray
+                || coll is String
+                || coll is IEnumerable;
+        }
+
         static IEnumerable NullIterator()
         {
             yield break;
@@ -3518,16 +3529,25 @@ namespace clojure.lang
             return GetFindFilePathsRaw().Distinct();
         }
 
+        static string GetAssemblyPath(Assembly assy) {
+            if (assy == null || String.IsNullOrEmpty(assy.Location)) {
+                return null;
+            }
+
+            return Path.GetDirectoryName(assy.Location);
+        }
+
         static IEnumerable<string> GetFindFilePathsRaw()
         {
             yield return System.Environment.CurrentDirectory;
             yield return Path.Combine(System.Environment.CurrentDirectory, "bin");
             yield return Directory.GetCurrentDirectory();
-            yield return Path.GetDirectoryName(typeof(RT).Assembly.Location);
 
-            Assembly assy = Assembly.GetEntryAssembly();
-            if ( assy != null )
-                yield return Path.GetDirectoryName(assy.Location);
+            string assyPath;
+            assyPath = GetAssemblyPath(typeof(RT).Assembly);
+            if (assyPath != null) yield return assyPath;
+            assyPath = GetAssemblyPath(Assembly.GetEntryAssembly());
+            if (assyPath != null) yield return assyPath;
 
             string rawpaths = (string)System.Environment.GetEnvironmentVariable(ClojureLoadPathString);
             if (rawpaths == null)
@@ -3684,6 +3704,7 @@ namespace clojure.lang
         /// Used in production systems when all namespaces are to be found in loaded assemblies.</remarks>
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA2211:NonConstantFieldsShouldNotBeVisible")]
         public static bool DisableFileLoad = false;
+        public static bool DisableEval = false;
     }
 
 }

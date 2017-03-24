@@ -8,7 +8,7 @@
 
 (ns clojure.uuid)
 
-(defn- default-uuid-reader [form]
+(defn- default-uuid-reader [^String form]
   {:pre [(string? form)]}
   (System.Guid. form))                                                ;;; (java.util.UUID/fromString form)
 

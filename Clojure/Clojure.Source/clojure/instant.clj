@@ -262,7 +262,7 @@ with invalid arguments."
 (defn- construct-datetimeoffset
   "Construct a System.DateTimeOffset, preserving the timezone offset
 but truncating the subsecond fraction to milliseconds."
-  ^DateTimeOffset
+  ^System.DateTimeOffset
   [years months days hours minutes seconds nanoseconds
    offset-sign offset-hours offset-minutes]
   (DateTimeOffset. years months days hours minutes seconds 

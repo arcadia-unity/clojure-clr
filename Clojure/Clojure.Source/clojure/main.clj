@@ -50,6 +50,7 @@
 
 (defn get-stack-trace 
   "Gets the stack trace for an Exception"
+  ^System.Array
   [^Exception e]
   (.GetFrames (System.Diagnostics.StackTrace. e true)))
 
@@ -117,7 +118,7 @@
   must either be an instance of LineNumberingPushbackReader or duplicate
   its behavior of both supporting .unread and collapsing all of CR, LF, and
   CRLF to a single \\newline."
-  [s]
+  [^clojure.lang.PushbackTextReader s]
   (let [c (.Read s)]                             ;;; .read
     (cond
      (= c (int \newline)) :line-start
@@ -133,7 +134,7 @@
   instance of LineNumberingPushbackReader or duplicate its behavior of both
   supporting .unread and collapsing all of CR, LF, and CRLF to a single
   \\newline."
-  [s]
+  [^clojure.lang.PushbackTextReader s]
   (loop [c (.Read s)]							;;; .read
     (cond
      (= c (int \newline)) :line-start
@@ -162,6 +163,7 @@
 
 (defn repl-exception
   "Returns the root cause of throwables"
+  ^System.Exception
   [throwable]
   (root-cause throwable))
 

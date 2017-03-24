@@ -817,9 +817,9 @@
      (let [id (System.Guid.)
            predx #(let [^clojure.lang.MultiFn mm @mmvar]
                     (c/and (contains? (methods mm)
-                                      ((.dispatchFn mm) %))
+                                      (mm %))
                            (mm %)))
-           dval #((.dispatchFn ^clojure.lang.MultiFn @mmvar) %)
+           dval #(@mmvar %)
            tag (if (keyword? retag)
                  #(assoc %1 retag %2)
                  retag)]
@@ -1534,7 +1534,7 @@
                        (if (instance? Exception ;;Throwable
                              ret)
                          ;;TODO add exception data
-                         {path {:pred '(apply fn) :val args :reason (.getMessage ^Exception ;;^Throwable
+                         {path {:pred '(apply fn) :val args :reason (.Message ^Exception ;;^Throwable
                                                                       ret) :via via :in in}}
 
                          (let [cret (dt retspec ret rform)]

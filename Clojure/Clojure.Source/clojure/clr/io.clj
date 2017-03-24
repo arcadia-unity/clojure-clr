@@ -13,7 +13,7 @@
     clojure.clr.io
     (:import 
      (System.IO 
-       Stream  BufferedStream 
+       Stream
        FileInfo  FileStream  MemoryStream
        FileMode FileShare FileAccess FileOptions
        BinaryReader BinaryWriter
@@ -39,16 +39,16 @@
   (as-uri [_] nil)
   
   String
-  (as-file [s] (FileInfo. s))
-  (as-uri [s] (Uri. s))
+  (as-file [^String s] (FileInfo. s))
+  (as-uri [^String s] (Uri. s))
     
   FileInfo
-  (as-file [f] f)
-  (as-uri [f] (Uri. (str "file://" (.FullName f))))
+  (as-file [^FileInfo f] f)
+  (as-uri [^FileInfo f] (Uri. (str "file://" (.FullName f))))
 
   Uri
-  (as-uri [u] u)
-  (as-file [u] 
+  (as-uri [^Uri u] u)
+  (as-file [^Uri u]
 	(if (.IsFile u)
 	  (as-file (.LocalPath u))
       (throw (ArgumentException. (str "Not a file: " u))))))
@@ -294,7 +294,7 @@
                      (file-mode :read opts) 
                      (file-access :read opts) 
                      (file-share opts) 
-                     (buffer-size opts) 
+                     ^int (buffer-size opts) 
                      (file-options opts)) 
          opts))
     :make-output-stream (fn [^FileInfo x opts] 
@@ -303,7 +303,7 @@
                      (file-mode :write opts) 
                      (file-access :write opts) 
                      (file-share opts) 
-                     (buffer-size opts) 
+                     ^int (buffer-size opts) 
                      (file-options opts)) 
          opts))))
         

@@ -131,7 +131,10 @@
 	   (typesym t))))
 
 (defrecord Constructor
-  [name declaring-class parameter-types flags])
+  [^clojure.lang.Symbol name
+   ^clojure.lang.Symbol declaring-class
+   ^clojure.lang.IPersistentVector parameter-types
+   ^clojure.lang.IPersistentSet flags])
 
 (defn- constructor->map
   [^System.Reflection.ConstructorInfo constructor]
