@@ -1,5 +1,5 @@
 echo "copy infrastructure"
-cp bin/3.5/Release/{Clojure,Microsoft.{Dynamic,Scripting,Scripting.{Core,Metadata}}}.dll $1/Infrastructure
+cp bin/3.5/Release/{Clojure,Microsoft.{Dynamic,Scripting,Scripting.{Core,Metadata}},*.clj}.dll $1/Infrastructure
 
 echo "copy clojure source"
 rm -fr $1/Source/clojure
